@@ -10,7 +10,7 @@ et leurs calques associes.
 from GlyphsApp import Glyphs, Message, GSBackgroundLayer, GSControlLayer
 
 try:
-	from vanilla import FloatingWindow, TextBox, CheckBox, Button
+	from vanilla import FloatingWindow, TextBox, CheckBox, Button, List
 	VANILLA_AVAILABLE = True
 except Exception:
 	VANILLA_AVAILABLE = False
@@ -69,10 +69,15 @@ class SelectionDialog:
 		("PONCTUATION", "punctuation"),
 	]
 
-	def __init__(self, controller, masters):
+	def __init__(self, controller, font):
 		self.controller = controller
-		height = 60 + 22 * (len(masters) + len(self.SECTION_KEYS)) + 40
-		self.w = FloatingWindow((360, height), "Alphabet Sketch V2")
+		self.font = font
+		masters = font.masters
+		self.glyph_names = [glyph.name for glyph in font.glyphs]
+
+		list_height = min(200, 24 * max(1, len(self.glyph_names)))
+		height = 100 + 22 * (len(masters) + len(self.SECTION_KEYS)) + list_height + 80
+		self.w = FloatingWindow((420, height), "Alphabet Sketch V2")
 
 		y = 12
 		self.w.masterLabel = TextBox((15, y, -15, 17), "Masters disponibles")
@@ -98,6 +103,27 @@ class SelectionDialog:
 			self.section_checks.append((key, cb))
 			y += 22
 
+		self.w.compareLabel = TextBox((15, y, -15, 17), "Compare all masters")
+		y += 20
+
+		self.w.compareCheck = CheckBox((25, y, -25, 20), "Activer la comparaison", value=False, callback=self.toggle_compare_options)
+		y += 28
+
+		column_descriptions = [
+			{"title": "Inclure", "key": "include", "editable": True, "width": 70, "cell": "CheckBox"},
+			{"title": "Glyphe", "key": "glyph", "editable": False},
+		]
+		glyph_items = [{"include": False, "glyph": name} for name in self.glyph_names]
+		self.w.glyphList = List((25, y, -25, list_height), glyph_items, columnDescriptions=column_descriptions, showColumnTitles=True)
+		self.w.glyphList.enable(False)
+		y += list_height + 8
+
+		self.w.selectAllGlyphs = Button((25, y, 140, 24), "Tout cocher", callback=self.select_all_glyphs)
+		self.w.clearGlyphs = Button((180, y, 140, 24), "Tout decocher", callback=self.clear_glyphs)
+		self.w.selectAllGlyphs.enable(False)
+		self.w.clearGlyphs.enable(False)
+		y += 36
+
 		self.w.runButton = Button((25, y, 140, 24), "Ouvrir les onglets", callback=self.run)
 		self.w.cancelButton = Button((190, y, 140, 24), "Annuler", callback=self.close)
 
@@ -106,19 +132,45 @@ class SelectionDialog:
 	def run(self, sender):
 		selected_masters = [master for master, cb in self.master_checks if cb.get()]
 		selected_sections = [key for key, cb in self.section_checks if cb.get()]
+		compare_enabled = self.w.compareCheck.get()
+		selected_glyphs = self.selected_compare_glyphs() if compare_enabled else []
 
 		if not selected_masters:
 			Message("Alphabet Sketch V2", "Selectionnez au moins un master.")
 			return
-		if not selected_sections:
-			Message("Alphabet Sketch V2", "Selectionnez au moins une section.")
+		if not selected_sections and not compare_enabled:
+			Message("Alphabet Sketch V2", "Selectionnez au moins une section ou activez la comparaison.")
+			return
+		if compare_enabled and not selected_glyphs:
+			Message("Alphabet Sketch V2", "Selectionnez au moins un glyphe pour la comparaison.")
 			return
 
 		self.close(None)
-		self.controller.run_with_options(selected_masters, selected_sections)
+		self.controller.run_with_options(selected_masters, selected_sections, compare_enabled, selected_glyphs)
 
 	def close(self, sender):
 		self.w.close()
+
+	def toggle_compare_options(self, sender):
+		state = bool(sender.get())
+		self.w.glyphList.enable(state)
+		self.w.selectAllGlyphs.enable(state)
+		self.w.clearGlyphs.enable(state)
+
+	def select_all_glyphs(self, sender):
+		data = self.w.glyphList.get()
+		for item in data:
+			item["include"] = True
+		self.w.glyphList.set(data)
+
+	def clear_glyphs(self, sender):
+		data = self.w.glyphList.get()
+		for item in data:
+			item["include"] = False
+		self.w.glyphList.set(data)
+
+	def selected_compare_glyphs(self):
+		return [item["glyph"] for item in self.w.glyphList.get() if item.get("include")]
 
 
 class AlphabetSketchPreviewV2:
@@ -131,11 +183,15 @@ class AlphabetSketchPreviewV2:
 			Message("Alphabet Sketch V2", "Installez Vanilla pour utiliser cette version.")
 			return
 
-		self.dialog = SelectionDialog(self, self.font.masters)
+		self.dialog = SelectionDialog(self, self.font)
 
-	def run_with_options(self, masters, sections):
+	def run_with_options(self, masters, sections, compare_enabled=False, compare_glyphs=None):
+		compare_glyphs = compare_glyphs or []
+
 		for master in masters:
 			self.open_tab_for_master(master, sections)
+		if compare_enabled and compare_glyphs:
+			self.open_comparison_tab(masters, compare_glyphs)
 
 	def open_tab_for_master(self, master, sections):
 		tab = self.font.newTab()
@@ -169,6 +225,37 @@ class AlphabetSketchPreviewV2:
 		if section_key == "punctuation":
 			return PUNCTUATION_GLYPHS
 		return []
+
+	def open_comparison_tab(self, masters, glyph_names):
+		if not masters or not glyph_names:
+			return
+
+		tab = self.font.newTab()
+		tab.masterIndex = self.font.masters.index(masters[0])
+		tab_layers = []
+
+		for glyph_name in glyph_names:
+			per_master_layers = []
+			max_layers = 0
+			for master in masters:
+				layers = glyph_layers(self.font, glyph_name, master)
+				per_master_layers.append(layers)
+				if len(layers) > max_layers:
+					max_layers = len(layers)
+
+			for layer_index in range(max_layers):
+				for layers in per_master_layers:
+					if layer_index < len(layers):
+						tab_layers.append(layers[layer_index])
+				tab_layers.append(GSControlLayer(10))
+
+			tab_layers.append(GSControlLayer(10))
+
+		while tab_layers and isinstance(tab_layers[-1], GSControlLayer):
+			tab_layers.pop()
+
+		if tab_layers:
+			tab.layers = tab_layers
 
 
 def main():

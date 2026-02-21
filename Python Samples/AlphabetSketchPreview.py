@@ -1,12 +1,12 @@
 # MenuTitle: Regular Alphabet Sketch Overview
 # -*- coding: utf-8 -*-
 __doc__ = """
-Cree un onglet pour le master 'Regular' avec l'alphabet (une lettre par ligne) en repetant
-la ligne du B autant de fois qu'il existe de calques brouillon pour ce glyph, puis ouvre
-un onglet dedie pour chaque sketch afin de pouvoir les inspecter.
+Cree un onglet pour le master 'Regular' (insensible a la casse) qui affiche une ligne par
+lettre majuscule. Chaque ligne contient le calque du master Regular suivi de tous les
+calques associes (sketchs), puis le script ouvre un onglet individuel par sketch du B.
 """
 
-from GlyphsApp import Glyphs, Message, GSBackgroundLayer
+from GlyphsApp import Glyphs, Message, GSBackgroundLayer, GSControlLayer
 
 
 ALPHABET = "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
@@ -39,28 +39,34 @@ def gather_sketch_layers(glyph, master_id):
 	return sketch_layers
 
 
-def glyph_text(font, glyph_name):
-	"""
-	Retourne /GlyphName si le glyphe existe, sinon le nom passe en parametre.
-	"""
-	glyph = font.glyphs[glyph_name]
-	if glyph is not None:
-		return f"/{glyph.name}"
-	return glyph_name
+def layers_for_letter(font, letter, master):
+	glyph = font.glyphs[letter]
+	if glyph is None:
+		return []
+
+	layers = []
+	master_layer = glyph.layers[master.id]
+	if master_layer:
+		layers.append(master_layer)
+	layers.extend(gather_sketch_layers(glyph, master.id))
+	return layers
 
 
-def new_tab_for_alphabet(font, master, b_sketch_count):
-	lines = []
-	for letter in ALPHABET:
-		letter_code = glyph_text(font, letter.upper())
-		if letter == "B":
-			repeat_count = max(b_sketch_count, 1)
-			lines.append(" ".join(glyph_text(font, "B") for _ in range(repeat_count)))
-		else:
-			lines.append(letter_code)
-
-	tab = font.newTab("\n".join(lines))
+def new_tab_for_alphabet(font, master):
+	tab = font.newTab()
 	tab.masterIndex = font.masters.index(master)
+
+	tab_layers = []
+	for letter in ALPHABET:
+		letter_layers = layers_for_letter(font, letter, master)
+		tab_layers.extend(letter_layers)
+		tab_layers.append(GSControlLayer(10))
+
+	if tab_layers:
+		tab_layers.pop()
+
+	if tab_layers:
+		tab.layers = tab_layers
 	return tab
 
 
@@ -96,7 +102,7 @@ def main():
 	b_glyph = font.glyphs["B"]
 	b_sketch_layers = gather_sketch_layers(b_glyph, master.id)
 
-	new_tab_for_alphabet(font, master, len(b_sketch_layers))
+	new_tab_for_alphabet(font, master)
 
 	if b_sketch_layers:
 		Glyphs.showMacroWindow()

@@ -10,7 +10,7 @@ et leurs calques associes.
 from GlyphsApp import Glyphs, Message, GSBackgroundLayer, GSControlLayer
 
 try:
-	from vanilla import FloatingWindow, TextBox, CheckBox, Button, List
+	from vanilla import FloatingWindow, TextBox, CheckBox, Button, List, CheckBoxListCell, EditText
 	VANILLA_AVAILABLE = True
 except Exception:
 	VANILLA_AVAILABLE = False
@@ -62,6 +62,23 @@ def glyph_layers(font, glyph_name, master):
 	return layers
 
 
+def layers_from_text(font, master, text):
+	layers = []
+	for char in text:
+		if char == "\n":
+			layers.append(GSControlLayer(10))
+			continue
+		if char == " ":
+			layers.append(GSControlLayer(32))
+			continue
+		glyph = font.glyphs[char]
+		if glyph:
+			layer = glyph.layers[master.id]
+			if layer:
+				layers.append(layer)
+	return layers
+
+
 class SelectionDialog:
 	SECTION_KEYS = [
 		("UPPERCASE", "uppercase"),
@@ -76,7 +93,7 @@ class SelectionDialog:
 		self.glyph_names = [glyph.name for glyph in font.glyphs]
 
 		list_height = min(200, 24 * max(1, len(self.glyph_names)))
-		height = 100 + 22 * (len(masters) + len(self.SECTION_KEYS)) + list_height + 80
+		height = 120 + 22 * (len(masters) + len(self.SECTION_KEYS)) + list_height + 120
 		self.w = FloatingWindow((420, height), "Alphabet Sketch V2")
 
 		y = 12
@@ -110,7 +127,7 @@ class SelectionDialog:
 		y += 28
 
 		column_descriptions = [
-			{"title": "Inclure", "key": "include", "editable": True, "width": 70, "cell": "CheckBox"},
+			{"title": "Inclure", "key": "include", "editable": True, "width": 70, "cell": CheckBoxListCell()},
 			{"title": "Glyphe", "key": "glyph", "editable": False},
 		]
 		glyph_items = [{"include": False, "glyph": name} for name in self.glyph_names]
@@ -124,6 +141,11 @@ class SelectionDialog:
 		self.w.clearGlyphs.enable(False)
 		y += 36
 
+		self.w.textLabel = TextBox((15, y, -15, 17), "Texte libre (optionnel)")
+		y += 20
+		self.w.textInput = EditText((25, y, -25, 22), "", placeholder="Entrez un mot ou une phrase")
+		y += 32
+
 		self.w.runButton = Button((25, y, 140, 24), "Ouvrir les onglets", callback=self.run)
 		self.w.cancelButton = Button((190, y, 140, 24), "Annuler", callback=self.close)
 
@@ -134,19 +156,26 @@ class SelectionDialog:
 		selected_sections = [key for key, cb in self.section_checks if cb.get()]
 		compare_enabled = self.w.compareCheck.get()
 		selected_glyphs = self.selected_compare_glyphs() if compare_enabled else []
+		text_input = (self.w.textInput.get() or "").strip()
 
 		if not selected_masters:
 			Message("Alphabet Sketch V2", "Selectionnez au moins un master.")
 			return
-		if not selected_sections and not compare_enabled:
-			Message("Alphabet Sketch V2", "Selectionnez au moins une section ou activez la comparaison.")
+		if not selected_sections and not compare_enabled and not text_input:
+			Message("Alphabet Sketch V2", "Selectionnez au moins une section, une comparaison ou saisissez du texte.")
 			return
 		if compare_enabled and not selected_glyphs:
 			Message("Alphabet Sketch V2", "Selectionnez au moins un glyphe pour la comparaison.")
 			return
 
 		self.close(None)
-		self.controller.run_with_options(selected_masters, selected_sections, compare_enabled, selected_glyphs)
+		self.controller.run_with_options(
+			selected_masters,
+			selected_sections,
+			compare_enabled,
+			selected_glyphs,
+			text_input,
+		)
 
 	def close(self, sender):
 		self.w.close()
@@ -185,13 +214,15 @@ class AlphabetSketchPreviewV2:
 
 		self.dialog = SelectionDialog(self, self.font)
 
-	def run_with_options(self, masters, sections, compare_enabled=False, compare_glyphs=None):
+	def run_with_options(self, masters, sections, compare_enabled=False, compare_glyphs=None, text_input=""):
 		compare_glyphs = compare_glyphs or []
 
 		for master in masters:
 			self.open_tab_for_master(master, sections)
 		if compare_enabled and compare_glyphs:
 			self.open_comparison_tab(masters, compare_glyphs)
+		if text_input:
+			self.open_text_tab(masters, text_input)
 
 	def open_tab_for_master(self, master, sections):
 		tab = self.font.newTab()
@@ -249,6 +280,29 @@ class AlphabetSketchPreviewV2:
 						tab_layers.append(layers[layer_index])
 				tab_layers.append(GSControlLayer(10))
 
+			tab_layers.append(GSControlLayer(10))
+
+		while tab_layers and isinstance(tab_layers[-1], GSControlLayer):
+			tab_layers.pop()
+
+		if tab_layers:
+			tab.layers = tab_layers
+
+	def open_text_tab(self, masters, text):
+		text = text.strip()
+		if not text:
+			return
+
+		tab = self.font.newTab()
+		tab.masterIndex = self.font.masters.index(masters[0])
+		tab_layers = []
+
+		for master in masters:
+			line_text = f"{text} {master.name}"
+			line_layers = layers_from_text(self.font, master, line_text)
+			if not line_layers:
+				continue
+			tab_layers.extend(line_layers)
 			tab_layers.append(GSControlLayer(10))
 
 		while tab_layers and isinstance(tab_layers[-1], GSControlLayer):

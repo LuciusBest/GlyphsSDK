@@ -79,8 +79,10 @@ class SelectionDialog:
 		y += 20
 
 		self.master_checks = []
-		for master in masters:
+		for idx, master in enumerate(masters):
+			attr = f"masterCheck{idx}"
 			cb = CheckBox((25, y, -25, 20), master.name, value=True)
+			setattr(self.w, attr, cb)
 			self.master_checks.append((master, cb))
 			y += 22
 
@@ -88,9 +90,11 @@ class SelectionDialog:
 		y += 20
 
 		self.section_checks = []
-		for label, key in self.SECTION_KEYS:
+		for idx, (label, key) in enumerate(self.SECTION_KEYS):
 			default_value = label == "UPPERCASE"
+			attr = f"sectionCheck{idx}"
 			cb = CheckBox((25, y, -25, 20), label, value=default_value)
+			setattr(self.w, attr, cb)
 			self.section_checks.append((key, cb))
 			y += 22
 

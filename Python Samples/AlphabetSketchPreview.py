@@ -13,8 +13,9 @@ ALPHABET = "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
 
 
 def get_master(font, master_name):
+	target = master_name.lower()
 	for master in font.masters:
-		if master.name == master_name:
+		if master.name.lower() == target:
 			return master
 	return None
 
@@ -38,14 +39,25 @@ def gather_sketch_layers(glyph, master_id):
 	return sketch_layers
 
 
+def glyph_text(font, glyph_name):
+	"""
+	Retourne /GlyphName si le glyphe existe, sinon le nom passe en parametre.
+	"""
+	glyph = font.glyphs[glyph_name]
+	if glyph is not None:
+		return f"/{glyph.name}"
+	return glyph_name
+
+
 def new_tab_for_alphabet(font, master, b_sketch_count):
 	lines = []
 	for letter in ALPHABET:
+		letter_code = glyph_text(font, letter.upper())
 		if letter == "B":
 			repeat_count = max(b_sketch_count, 1)
-			lines.append(" ".join("B" for _ in range(repeat_count)))
+			lines.append(" ".join(glyph_text(font, "B") for _ in range(repeat_count)))
 		else:
-			lines.append(letter)
+			lines.append(letter_code)
 
 	tab = font.newTab("\n".join(lines))
 	tab.masterIndex = font.masters.index(master)

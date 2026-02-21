@@ -2,8 +2,8 @@
 # -*- coding: utf-8 -*-
 __doc__ = """
 Cree un onglet pour le master 'Regular' (insensible a la casse) qui affiche une ligne par
-lettre majuscule. Chaque ligne contient le calque du master Regular suivi de tous les
-calques associes (sketchs), puis le script ouvre un onglet individuel par sketch du B.
+lettre majuscule. Chaque ligne contient le calque du master Regular suivi de tous ses
+calques associes (sketchs).
 """
 
 from GlyphsApp import Glyphs, Message, GSBackgroundLayer, GSControlLayer
@@ -70,24 +70,6 @@ def new_tab_for_alphabet(font, master):
 	return tab
 
 
-def show_sketch_tabs(font, master, sketch_layers):
-	if not sketch_layers:
-		return
-
-	master_index = font.masters.index(master)
-	for idx, layer in enumerate(sketch_layers, 1):
-		tab = font.newTab()
-		tab.masterIndex = master_index
-		tab.layers = [layer]
-		layer_name = layer.name or f"Sketch {idx}"
-		try:
-			window = tab.graphicView().window()
-			if window is not None:
-				window.setTitle_(f"B - {layer_name}")
-		except AttributeError:
-			pass
-
-
 def main():
 	font = Glyphs.font
 	if font is None:
@@ -99,19 +81,7 @@ def main():
 		Message("Alphabet Sketch", "Aucun master nomme 'Regular' dans cette police.")
 		return
 
-	b_glyph = font.glyphs["B"]
-	b_sketch_layers = gather_sketch_layers(b_glyph, master.id)
-
 	new_tab_for_alphabet(font, master)
-
-	if b_sketch_layers:
-		Glyphs.showMacroWindow()
-		print(f"{len(b_sketch_layers)} sketch(s) pour B sur le master Regular :")
-		for idx, layer in enumerate(b_sketch_layers, 1):
-			layer_name = layer.name or f"Sketch {idx}"
-			print(f"{idx:02d} - {layer_name}")
-
-	show_sketch_tabs(font, master, b_sketch_layers)
 
 
 if __name__ == "__main__":

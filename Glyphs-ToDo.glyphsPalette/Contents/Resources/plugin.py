@@ -191,21 +191,22 @@ class GlyphsToDoPlugin(PalettePlugin):
 		rawText = (self.paletteWindow.group.newTaskField.get() or '').strip()
 		if not rawText:
 			return
-		cleanText, glyphFromText, categoryFromText = self._extractMetadataFromText(rawText)
+		cleanText, glyphTokens, categoryFromText = self._extractMetadataFromText(rawText)
 		glyphInput = (self.paletteWindow.group.glyphField.get() or '').strip()
-		glyphName = glyphInput or glyphFromText
-		if glyphName:
-			glyphName = self._glyphLookup.get(glyphName.lower(), glyphName)
+		manualGlyphs = self._parseGlyphInput(glyphInput)
+		glyphNames = self._normalizeGlyphList(glyphTokens + manualGlyphs)
+		glyphNames = [self._resolveGlyphName(name) for name in glyphNames]
 		categoryKey = categoryFromText
 		if not categoryKey:
 			categoryKey = self._categoryKeyFromIndex(self.paletteWindow.group.categoryPopUp.get())
 
 		if not cleanText:
-			cleanText = glyphName or categoryKey or ''
+			cleanText = ' '.join(glyphNames) or categoryKey or ''
 		self.todoItems.insert(0, {
 			'task': cleanText,
 			'done': False,
-			'glyph': glyphName,
+			'glyphs': glyphNames,
+			'glyph': glyphNames[0] if glyphNames else '',
 			'category': categoryKey,
 		})
 		self.paletteWindow.group.newTaskField.set('')
@@ -240,9 +241,19 @@ class GlyphsToDoPlugin(PalettePlugin):
 	def _baseDisplayItem(self, item):
 		return {
 			'task': item.get('task', ''),
-			'glyph': item.get('glyph', ''),
+			'glyph': self._glyphDisplay(item),
 			'category': self._categoryLabelFromKey(item.get('category')),
 		}
+
+	@objc.python_method
+	def _glyphDisplay(self, item):
+		glyphs = item.get('glyphs')
+		if not glyphs and item.get('glyph'):
+			glyphs = [item.get('glyph')]
+		if not glyphs:
+			return ''
+		resolved = [self._resolveGlyphName(name) for name in glyphs]
+		return ', '.join(resolved)
 
 	@objc.python_method
 	def _activeDisplayItem(self, item):
@@ -288,18 +299,26 @@ class GlyphsToDoPlugin(PalettePlugin):
 				task = entry.get('task')
 				done = bool(entry.get('done', False))
 				glyphName = entry.get('glyph', '')
+				glyphList = []
+				storedGlyphs = entry.get('glyphs')
+				if isinstance(storedGlyphs, list):
+					glyphList = [name for name in storedGlyphs if isinstance(name, str)]
+				elif glyphName:
+					glyphList = [glyphName]
 				category = self._normalizeCategory(entry.get('category'))
 			else:
 				task = entry
 				done = False
 				glyphName = ''
+				glyphList = []
 				category = self._categoryKeyFromIndex(0)
 
 			if task:
 				normalized.append({
 					'task': task,
 					'done': done,
-					'glyph': glyphName,
+					'glyph': glyphList[0] if glyphList else glyphName,
+					'glyphs': glyphList,
 					'category': category,
 				})
 		return normalized
@@ -591,25 +610,61 @@ class GlyphsToDoPlugin(PalettePlugin):
 	def _extractMetadataFromText(self, text):
 		words = text.split()
 		cleanWords = []
-		glyphName = None
+		glyphTokens = []
 		categoryKey = None
 		for word in words:
 			if word.startswith('/') and len(word) > 1:
 				token = word[1:]
 				lower = token.lower()
-				resolvedGlyph = False
-				if glyphName is None and lower in self._glyphLookup:
-					glyphName = self._glyphLookup[lower]
-					resolvedGlyph = True
 				if categoryKey is None and lower in self._categoryLookup:
 					categoryKey = self._categoryLookup[lower]
-				if glyphName is None and not resolvedGlyph and lower not in self._categoryLookup:
-					glyphName = token
+				elif lower not in self._categoryLookup:
+					glyphTokens.append(token)
 				cleanWords.append(token)
 			else:
 				cleanWords.append(word)
 		cleanText = ' '.join(filter(None, cleanWords)).strip()
-		return cleanText, glyphName, categoryKey
+		return cleanText, glyphTokens, categoryKey
+
+	@objc.python_method
+	def _parseGlyphInput(self, text):
+		if not text:
+			return []
+		normalized = []
+		for chunk in text.replace(',', ' ').split():
+			token = chunk.strip()
+			if not token:
+				continue
+			if token.startswith('/'):
+				token = token[1:]
+			if token:
+				normalized.append(token)
+		return normalized
+
+	@objc.python_method
+	def _normalizeGlyphList(self, names):
+		if not names:
+			return []
+		seen = set()
+		result = []
+		for name in names:
+			if not name:
+				continue
+			token = name.strip()
+			if not token:
+				continue
+			key = token.lower()
+			if key in seen:
+				continue
+			seen.add(key)
+			result.append(token)
+		return result
+
+	@objc.python_method
+	def _resolveGlyphName(self, name):
+		if not name:
+			return ''
+		return self._glyphLookup.get(name.lower(), name)
 
 	@objc.python_method
 	def _buildActiveColumns(self):
@@ -794,21 +849,46 @@ class GlyphsToDoPlugin(PalettePlugin):
 		self._openGlyph(index)
 
 	@objc.python_method
+	def _glyphsForTask(self, task):
+		glyphs = []
+		if isinstance(task.get('glyphs'), list):
+			glyphs = [name for name in task.get('glyphs') if isinstance(name, str)]
+		elif task.get('glyph'):
+			glyphs = [task.get('glyph')]
+		normalized = []
+		seen = set()
+		for name in glyphs:
+			if not name:
+				continue
+			resolved = self._resolveGlyphName(name)
+			if not resolved:
+				continue
+			key = resolved.lower()
+			if key in seen:
+				continue
+			seen.add(key)
+			normalized.append(resolved)
+		return normalized
+
+	@objc.python_method
 	def _openGlyph(self, index):
 		font = self._currentFont()
 		if font is None:
 			return
 		task = self.todoItems[index]
-		glyphName = task.get('glyph') or ''
-		if not glyphName:
+		glyphNames = self._glyphsForTask(task)
+		if not glyphNames:
 			return
-		glyph = font.glyphs[glyphName]
-		if glyph is None:
+		layersToOpen = []
+		for glyphName in glyphNames:
+			glyph = font.glyphs[glyphName]
+			if glyph is None:
+				continue
+			layer = self._layerForGlyph(glyph)
+			if layer is not None:
+				layersToOpen.append(layer)
+		if not layersToOpen:
 			return
-		layer = self._layerForGlyph(glyph)
-		if layer is None:
-			return
-		layersToOpen = [layer]
 		document = getattr(font, 'parent', None)
 		if document:
 			try:
@@ -821,7 +901,7 @@ class GlyphsToDoPlugin(PalettePlugin):
 		try:
 			font.newTab(layersToOpen)
 		except Exception:
-			self.logToConsole(f"Glyphs-ToDo: unable to open glyph '{glyphName}'")
+			self.logToConsole("Glyphs-ToDo: unable to open glyphs '%s'" % ', '.join(glyphNames))
 
 	@objc.python_method
 	def _layerForGlyph(self, glyph):

@@ -755,8 +755,8 @@ class GlyphsToDoPlugin(PalettePlugin):
 		items.extend(categoryItems)
 		items.extend(glyphItems)
 		masterItems = []
-		for masterName in self._masterNames:
-			if not prefixLower or masterName.lower().startswith(prefixLower):
+		for masterName in self._currentMasterNames():
+			if self._matchesRelaxedPrefix(prefixLower, masterName):
 				masterItems.append({
 					'label': "/%s" % masterName,
 					'kind': Glyphs.localize({'en': 'Master', 'fr': 'Master'}),
@@ -766,6 +766,35 @@ class GlyphsToDoPlugin(PalettePlugin):
 		items.extend(masterItems)
 		self._log('_buildSuggestions master matches=%d' % len(masterItems))
 		return items
+
+	@objc.python_method
+	def _currentMasterNames(self):
+		font = self._activeFont or self._currentFont()
+		if not font:
+			return []
+		names = []
+		for master in getattr(font, 'masters', []):
+			name = getattr(master, 'name', None)
+			if name:
+				names.append(name)
+		return names
+
+	@objc.python_method
+	def _matchesRelaxedPrefix(self, prefixLower, candidate):
+		if not prefixLower:
+			return True
+		candidateLower = candidate.lower()
+		if candidateLower.startswith(prefixLower):
+			return True
+		normalizedPrefix = self._normalizedIdentifier(prefixLower)
+		normalizedCandidate = self._normalizedIdentifier(candidateLower)
+		return bool(normalizedPrefix) and normalizedPrefix in normalizedCandidate
+
+	@objc.python_method
+	def _normalizedIdentifier(self, text):
+		if not text:
+			return ''
+		return ''.join(ch for ch in text.lower() if ch.isalnum())
 
 	@objc.python_method
 	def _showSuggestions(self, suggestions):

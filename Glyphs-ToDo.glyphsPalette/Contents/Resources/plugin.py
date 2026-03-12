@@ -492,10 +492,17 @@ class GlyphsToDoPlugin(PalettePlugin):
 		doneHeights = [self._heightForText(item['task'], 150) for item in self.paletteWindow.group.doneList.get()]
 		if activeHeights:
 			height = max(50, min(120, max(activeHeights)))
-			self.paletteWindow.group.todoList.setRowHeight(height)
+			self._setListRowHeight(self.paletteWindow.group.todoList, height)
 		if doneHeights:
 			height = max(40, min(120, max(doneHeights)))
-			self.paletteWindow.group.doneList.setRowHeight(height)
+			self._setListRowHeight(self.paletteWindow.group.doneList, height)
+
+	@objc.python_method
+	def _setListRowHeight(self, listView, height):
+		try:
+			listView._tableView.setRowHeight_(height)
+		except Exception:
+			pass
 
 	@objc.python_method
 	def _heightForText(self, text, width):

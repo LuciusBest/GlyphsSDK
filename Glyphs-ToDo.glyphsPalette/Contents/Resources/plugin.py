@@ -816,14 +816,15 @@ class GlyphsToDoPlugin(PalettePlugin):
 
 	@objc.python_method
 	def _suggestionListViewAndContainer(self):
-		if not self._ensureSuggestionList():
+		listView = self._ensureSuggestionList()
+		if not listView:
 			self._log('_suggestionListViewAndContainer no suggestion list')
 			return (None, None)
 		groupView = self.paletteWindow.group.getNSView()
 		if groupView is None:
 			self._log('_suggestionListViewAndContainer missing group view')
 			return (None, None)
-		viewCandidate = getattr(self._suggestionList, '_scrollView', None)
+		viewCandidate = getattr(listView, '_scrollView', None)
 		getView = getattr(self._suggestionList, 'getNSView', None)
 		if callable(getView):
 			try:
@@ -831,7 +832,7 @@ class GlyphsToDoPlugin(PalettePlugin):
 			except Exception:
 				viewCandidate = viewCandidate or None
 		if viewCandidate is None:
-			viewCandidate = getattr(self._suggestionList, '_nsObject', None)
+			viewCandidate = getattr(listView, '_nsObject', None)
 		if viewCandidate is None:
 			self._log('_suggestionListViewAndContainer missing candidate view')
 			return (None, None)
@@ -917,12 +918,13 @@ class GlyphsToDoPlugin(PalettePlugin):
 
 	@objc.python_method
 	def _setSuggestionListHidden(self, hidden):
-		if not self._ensureSuggestionList():
+		listView = self._ensureSuggestionList()
+		if not listView:
 			self._log('_setSuggestionListHidden no suggestion list')
 			return
-		view = getattr(self._suggestionList, '_scrollView', None)
+		view = getattr(listView, '_scrollView', None)
 		if view is None:
-			view = getattr(self._suggestionList, '_nsObject', None)
+			view = getattr(listView, '_nsObject', None)
 		if view is None:
 			self._log('_setSuggestionListHidden no native view to hide/show')
 			return

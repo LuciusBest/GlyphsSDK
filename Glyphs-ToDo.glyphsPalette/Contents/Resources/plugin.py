@@ -4,6 +4,8 @@ from __future__ import division, print_function, unicode_literals
 import json
 import math
 import objc
+import weakref
+from Foundation import NSObject
 from AppKit import (
 	NSImage,
 	NSImageNameFollowLinkFreestandingTemplate,
@@ -19,11 +21,47 @@ from vanilla import (
 	EditText,
 	Group,
 	List,
+	Popover,
 	PopUpButton,
 	SegmentedButtonListCell,
 	TextBox,
 	Window,
 )
+
+
+class TaskFieldDelegate(NSObject):
+	controllerRef = None
+
+	def initWithController_(self, controller):
+		self = objc.super(TaskFieldDelegate, self).init()
+		if self is None:
+			return None
+		self.controllerRef = weakref.ref(controller)
+		return self
+
+	def controlTextDidChange_(self, notification):
+		controller = self._controller()
+		if controller:
+			controller._taskFieldDidChange()
+
+	def control_textView_doCommandBySelector_(self, control, textView, selector):
+		controller = self._controller()
+		if controller:
+			handled = controller._handleTaskFieldCommand(selector)
+			if handled:
+				return True
+		return False
+
+	def controlTextDidEndEditing_(self, notification):
+		controller = self._controller()
+		if controller:
+			controller._hideSuggestions()
+
+	def _controller(self):
+		try:
+			return self.controllerRef() if self.controllerRef else None
+		except ReferenceError:
+			return None
 
 
 class GlyphsToDoPlugin(PalettePlugin):
@@ -50,6 +88,13 @@ class GlyphsToDoPlugin(PalettePlugin):
 		self._activeFont = None
 		self._categoryFilter = None
 		self._doneExpanded = False
+		self._suggestionPopover = None
+		self._suggestionList = None
+		self._currentSuggestions = []
+		self._selectedSuggestionIndex = -1
+		self._currentTokenRange = None
+		self._glyphNames = []
+		self._glyphLookup = {}
 
 		width, height = 260, 360
 		self.paletteWindow = Window((width, height))
@@ -64,6 +109,8 @@ class GlyphsToDoPlugin(PalettePlugin):
 			}),
 			sizeStyle='small',
 		)
+		self.taskFieldDelegate = TaskFieldDelegate.alloc().initWithController_(self)
+		self.paletteWindow.group.newTaskField._nsObject.setDelegate_(self.taskFieldDelegate)
 		self.paletteWindow.group.addButton = Button(
 			(-80, 20, -10, 24),
 			Glyphs.localize({'en': 'Add', 'fr': 'Ajouter'}),
@@ -79,6 +126,7 @@ class GlyphsToDoPlugin(PalettePlugin):
 
 		self.categoryStrings = [Glyphs.localize(names) for names in self.categoryOptions]
 		self.categoryKeys = [entry['en'] for entry in self.categoryOptions]
+		self._categoryLookup = self._buildCategoryLookup()
 		self.openIcon = self._symbolImage('pencil') or NSImage.imageNamed_(NSImageNameFollowLinkFreestandingTemplate)
 		self.doneIcon = self._symbolImage('checkmark.circle') or NSImage.imageNamed_(NSImageNameStatusAvailable)
 		self.deleteIcon = self._symbolImage('trash') or NSImage.imageNamed_(NSImageNameTrashEmpty)
@@ -144,21 +192,29 @@ class GlyphsToDoPlugin(PalettePlugin):
 		if font is None:
 			return
 
-		text = self.paletteWindow.group.newTaskField.get().strip()
-		if not text:
+		rawText = (self.paletteWindow.group.newTaskField.get() or '').strip()
+		if not rawText:
 			return
-		glyphName = (self.paletteWindow.group.glyphField.get() or '').strip()
-		catIndex = self.paletteWindow.group.categoryPopUp.get()
-		category = self._categoryKeyFromIndex(catIndex)
+		cleanText, glyphFromText, categoryFromText = self._extractMetadataFromText(rawText)
+		glyphInput = (self.paletteWindow.group.glyphField.get() or '').strip()
+		glyphName = glyphInput or glyphFromText
+		if glyphName:
+			glyphName = self._glyphLookup.get(glyphName.lower(), glyphName)
+		categoryKey = categoryFromText
+		if not categoryKey:
+			categoryKey = self._categoryKeyFromIndex(self.paletteWindow.group.categoryPopUp.get())
 
+		if not cleanText:
+			cleanText = glyphName or categoryKey or ''
 		self.todoItems.insert(0, {
-			'task': text,
+			'task': cleanText,
 			'done': False,
 			'glyph': glyphName,
-			'category': category,
+			'category': categoryKey,
 		})
 		self.paletteWindow.group.newTaskField.set('')
 		self.paletteWindow.group.glyphField.set('')
+		self._hideSuggestions()
 		self._refreshList()
 		self._saveTasks(font)
 
@@ -282,9 +338,14 @@ class GlyphsToDoPlugin(PalettePlugin):
 		if font is self._activeFont:
 			return
 
-		self._activeFont = font
-		self.todoItems = self._loadTasks(font)
-		self._refreshList()
+			self._activeFont = font
+			self.todoItems = self._loadTasks(font)
+			self._refreshList()
+			self._glyphNames = sorted([glyph.name for glyph in font.glyphs if glyph.name], key=lambda n: n.lower())
+			self._glyphLookup = {name.lower(): name for name in self._glyphNames}
+		else:
+			self._glyphNames = []
+			self._glyphLookup = {}
 
 	@objc.python_method
 	def minHeight(self):
@@ -299,6 +360,252 @@ class GlyphsToDoPlugin(PalettePlugin):
 		return __file__
 
 	# --- UI helpers ---
+
+	@objc.python_method
+	def _taskFieldDidChange(self):
+		self._pendingGlyphName = None
+		self._pendingCategoryKey = None
+		self._updateSuggestions()
+
+	@objc.python_method
+	def _handleTaskFieldCommand(self, selector):
+		if selector in ('moveDown:', 'moveUp:'):
+			if self._currentSuggestions:
+				self._moveSuggestion(1 if selector == 'moveDown:' else -1)
+				return True
+			return False
+		if selector in ('insertTab:', 'insertNewline:'):
+			if self._acceptCurrentSuggestion():
+				return True
+			return False
+		if selector == 'cancelOperation:':
+			self._hideSuggestions()
+			return False
+		return False
+
+	@objc.python_method
+	def _currentTaskFieldState(self):
+		field = self.paletteWindow.group.newTaskField
+		text = field.get() or ''
+		editor = field._nsObject.currentEditor()
+		cursor = len(text)
+		if editor:
+			try:
+				cursor = editor.selectedRange()[0]
+			except Exception:
+				pass
+		return text, cursor
+
+	@objc.python_method
+	def _updateSuggestions(self):
+		text, cursor = self._currentTaskFieldState()
+		token, start, end = self._detectSlashToken(text, cursor)
+		if not token:
+			self._hideSuggestions()
+			return
+		suggestions = self._buildSuggestions(token[1:])
+		self._currentTokenRange = (start, end)
+		if suggestions:
+			self._showSuggestions(suggestions)
+		else:
+			self._hideSuggestions()
+
+	@objc.python_method
+	def _detectSlashToken(self, text, cursor):
+		if not text or cursor == 0:
+			return (None, None, None)
+		start = cursor
+		while start > 0 and not text[start - 1].isspace():
+			start -= 1
+		end = cursor
+		length = len(text)
+		while end < length and not text[end].isspace():
+			end += 1
+		token = text[start:end]
+		if token.startswith('/'):
+			return token, start, end
+		return (None, None, None)
+
+	@objc.python_method
+	def _buildSuggestions(self, prefix):
+		prefixLower = prefix.lower()
+		items = []
+		categoryItems = []
+		for key in self.categoryKeys:
+			label = key
+			display = "/%s" % key
+			if not prefixLower or key.lower().startswith(prefixLower):
+				categoryItems.append({
+					'label': display,
+					'kind': Glyphs.localize({'en': 'Category', 'fr': 'Categorie'}),
+					'type': 'category',
+					'value': key,
+				})
+		glyphItems = []
+		limit = 50 if prefixLower else 25
+		count = 0
+		for name in self._glyphNames:
+			if not prefixLower or name.lower().startswith(prefixLower):
+				glyphItems.append({
+					'label': "/%s" % name,
+					'kind': Glyphs.localize({'en': 'Glyph', 'fr': 'Glyphe'}),
+					'type': 'glyph',
+					'value': name,
+				})
+				count += 1
+				if count >= limit:
+					break
+		items.extend(categoryItems)
+		items.extend(glyphItems)
+		return items
+
+	@objc.python_method
+	def _showSuggestions(self, suggestions):
+		if not suggestions:
+			self._hideSuggestions()
+			return
+		self._currentSuggestions = suggestions
+		if not self._suggestionPopover:
+			self._createSuggestionPopover()
+			parentView = self.paletteWindow.group.newTaskField._nsObject
+			origin, size = parentView.bounds()
+			rect = (0, size[1], size[0], 1)
+			self._suggestionPopover.open(parentView=parentView, preferredEdge='bottom', relativeRect=rect)
+		self._selectedSuggestionIndex = 0
+		if self._suggestionList:
+			self._suggestionList.set(suggestions)
+			self._suggestionList.setSelection([0])
+		self._resizeSuggestionPopover()
+
+	@objc.python_method
+	def _resizeSuggestionPopover(self):
+		if not self._suggestionPopover:
+			return
+		rows = max(1, min(8, len(self._currentSuggestions)))
+		height = 10 + rows * 22
+		self._suggestionPopover.resize(260, height)
+
+	@objc.python_method
+	def _hideSuggestions(self):
+		if self._suggestionPopover:
+			self._suggestionPopover.close()
+			self._suggestionPopover = None
+			self._suggestionList = None
+		self._currentSuggestions = []
+		self._selectedSuggestionIndex = -1
+		self._currentTokenRange = None
+
+	@objc.python_method
+	def _createSuggestionPopover(self):
+		pop = Popover((260, 120), behavior='transient')
+		pop.list = List(
+			(0, 0, -0, -0),
+			[],
+			columnDescriptions=[
+				{'title': Glyphs.localize({'en': 'Suggestion', 'fr': 'Suggestion'}), 'key': 'label'},
+				{'title': Glyphs.localize({'en': 'Type', 'fr': 'Type'}), 'key': 'kind', 'width': 80},
+			],
+			showColumnTitles=False,
+			enableDelete=False,
+			allowsMultipleSelection=False,
+			selectionCallback=self._suggestionSelectionChanged,
+			doubleClickCallback=self._suggestionDoubleClicked,
+		)
+		self._suggestionPopover = pop
+		self._suggestionList = pop.list
+		pop.bind('did close', self._suggestionPopoverClosed)
+
+	@objc.python_method
+	def _suggestionPopoverClosed(self, sender):
+		self._suggestionPopover = None
+		self._suggestionList = None
+		self._currentSuggestions = []
+		self._selectedSuggestionIndex = -1
+		self._currentTokenRange = None
+
+	@objc.python_method
+	def _moveSuggestion(self, delta):
+		if not self._currentSuggestions:
+			return
+		index = self._selectedSuggestionIndex if self._selectedSuggestionIndex is not None else 0
+		index = (index + delta) % len(self._currentSuggestions)
+		self._selectedSuggestionIndex = index
+		if self._suggestionList:
+			self._suggestionList.setSelection([index])
+
+	@objc.python_method
+	def _acceptCurrentSuggestion(self):
+		if not self._currentSuggestions:
+			return False
+		index = self._selectedSuggestionIndex
+		if index is None or index < 0:
+			index = 0
+		return self._applySuggestion(index)
+
+	@objc.python_method
+	def _applySuggestion(self, index):
+		if not self._currentTokenRange or index >= len(self._currentSuggestions):
+			return False
+		item = self._currentSuggestions[index]
+		text, _ = self._currentTaskFieldState()
+		start, end = self._currentTokenRange
+		replacement = "/%s" % item['value']
+		newText = text[:start] + replacement + text[end:]
+		field = self.paletteWindow.group.newTaskField
+		field.set(newText)
+		editor = field._nsObject.currentEditor()
+		if editor:
+			try:
+				editor.setSelectedRange_((start + len(replacement), 0))
+			except Exception:
+				pass
+		if item['type'] == 'glyph':
+			self.paletteWindow.group.glyphField.set(item['value'])
+		elif item['type'] == 'category':
+			self._selectCategoryKey(item['value'])
+		self._taskFieldDidChange()
+		self._hideSuggestions()
+		return True
+
+	@objc.python_method
+	def _suggestionSelectionChanged(self, sender):
+		selection = sender.getSelection()
+		if selection:
+			self._selectedSuggestionIndex = selection[0]
+
+	@objc.python_method
+	def _suggestionDoubleClicked(self, sender):
+		selection = sender.getSelection()
+		if selection:
+			if self._applySuggestion(selection[0]):
+				self._hideSuggestions()
+
+	@objc.python_method
+	def _selectCategoryKey(self, key):
+		if key not in self.categoryKeys:
+			return
+		index = self.categoryKeys.index(key)
+		self.paletteWindow.group.categoryPopUp.set(index)
+
+	@objc.python_method
+	def _extractMetadataFromText(self, text):
+		words = text.split()
+		cleanWords = []
+		glyphName = None
+		categoryKey = None
+		for word in words:
+			if word.startswith('/') and len(word) > 1:
+				token = word[1:]
+				lower = token.lower()
+				if glyphName is None and lower in self._glyphLookup:
+					glyphName = self._glyphLookup[lower]
+				if categoryKey is None and lower in self._categoryLookup:
+					categoryKey = self._categoryLookup[lower]
+				cleanWords.append(token)
+			else:
+				cleanWords.append(word)
+		cleanText = ' '.join(filter(None, cleanWords)).strip()
+		return cleanText, glyphName, categoryKey
 
 	@objc.python_method
 	def _buildActiveColumns(self):
@@ -381,7 +688,15 @@ class GlyphsToDoPlugin(PalettePlugin):
 		for idx, localized in enumerate(self.categoryStrings):
 			if localized == value:
 				return self.categoryKeys[idx]
-		return self._categoryKeyFromIndex(0)
+			return self._categoryKeyFromIndex(0)
+
+	@objc.python_method
+	def _buildCategoryLookup(self):
+		lookup = {}
+		for key, label in zip(self.categoryKeys, self.categoryStrings):
+			lookup[key.lower()] = key
+			lookup[label.lower()] = key
+		return lookup
 
 	@objc.python_method
 	def _filterChanged(self, sender):

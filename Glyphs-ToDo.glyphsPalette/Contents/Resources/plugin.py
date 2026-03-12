@@ -91,6 +91,7 @@ class CategoryBadgeCell(NSTextFieldCell):
 	paddingX = 10
 	paddingY = 5
 	radius = 8
+	horizontalPadding = 5
 
 	def drawWithFrame_inView_(self, frame, view):
 		value = self.stringValue()
@@ -105,7 +106,7 @@ class CategoryBadgeCell(NSTextFieldCell):
 		}
 		attrString = NSAttributedString.alloc().initWithString_attributes_(value, attributes)
 		textSize = attrString.size()
-		width = textSize.width + 2
+		width = textSize.width + (self.horizontalPadding * 2)
 		height = textSize.height + 2
 		centerY = frame.origin.y + frame.size.height / 2.0
 		x = frame.origin.x + 4
@@ -113,7 +114,7 @@ class CategoryBadgeCell(NSTextFieldCell):
 		path = NSBezierPath.bezierPathWithRoundedRect_xRadius_yRadius_(rect, self.radius, self.radius)
 		self.badgeColor.set()
 		path.fill()
-		textRect = NSMakeRect(rect.origin.x + 1, rect.origin.y + (height - textSize.height) / 2.0, textSize.width, textSize.height)
+		textRect = NSMakeRect(rect.origin.x + self.horizontalPadding, rect.origin.y + (height - textSize.height) / 2.0, textSize.width, textSize.height)
 		attrString.drawInRect_(textRect)
 
 
@@ -916,6 +917,10 @@ class GlyphsToDoPlugin(PalettePlugin):
 			return
 		tableView.setAllowsColumnReordering_(False)
 		tableView.setAllowsColumnSelection_(False)
+		try:
+			tableView.setAllowsColumnResizing_(True)
+		except Exception:
+			pass
 		tableView.setAllowsMultipleSelection_(False)
 		tableView.setRowHeight_(rowHeight)
 		try:

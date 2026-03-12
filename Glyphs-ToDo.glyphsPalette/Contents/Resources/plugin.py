@@ -4,7 +4,6 @@ from __future__ import division, print_function, unicode_literals
 import json
 import math
 import objc
-import weakref
 from Foundation import NSObject
 from AppKit import (
 	NSImage,
@@ -30,13 +29,13 @@ from vanilla import (
 
 
 class TaskFieldDelegate(NSObject):
-	controllerRef = None
+	controller = None
 
 	def initWithController_(self, controller):
 		self = objc.super(TaskFieldDelegate, self).init()
 		if self is None:
 			return None
-		self.controllerRef = weakref.ref(controller)
+		self.controller = controller
 		return self
 
 	def controlTextDidChange_(self, notification):
@@ -58,10 +57,7 @@ class TaskFieldDelegate(NSObject):
 			controller._hideSuggestions()
 
 	def _controller(self):
-		try:
-			return self.controllerRef() if self.controllerRef else None
-		except ReferenceError:
-			return None
+		return self.controller
 
 
 class GlyphsToDoPlugin(PalettePlugin):

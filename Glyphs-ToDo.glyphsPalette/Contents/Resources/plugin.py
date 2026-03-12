@@ -89,7 +89,6 @@ class GlyphsToDoPlugin(PalettePlugin):
 			allowsMultipleSelection=False,
 			drawFocusRing=False,
 			rowHeight=56,
-			doubleClickCallback=self._handleRowDoubleClick,
 			editCallback=self._handleActiveEdit,
 		)
 
@@ -110,7 +109,6 @@ class GlyphsToDoPlugin(PalettePlugin):
 			allowsMultipleSelection=False,
 			drawFocusRing=False,
 			rowHeight=48,
-			doubleClickCallback=self._handleRowDoubleClick,
 			editCallback=self._handleDoneEdit,
 		)
 		self.paletteWindow.group.doneList.show(False)
@@ -368,18 +366,9 @@ class GlyphsToDoPlugin(PalettePlugin):
 		self._refreshList()
 
 	@objc.python_method
-	def _handleRowDoubleClick(self, sender):
-		row = sender.getSelection()
-		if not row:
-			return
-		self._openGlyphForRow(sender, row[0])
-
-	@objc.python_method
 	def _handleActiveEdit(self, sender):
-		columnIndex, rowIndex = sender.getEditedColumnAndRow()
+		columnIndex, rowIndex = self._clickedCellPosition(sender)
 		if columnIndex is None or rowIndex is None:
-			return
-		if columnIndex < 0 or rowIndex < 0:
 			return
 		if columnIndex >= len(self._activeColumnKeys):
 			return
@@ -399,10 +388,8 @@ class GlyphsToDoPlugin(PalettePlugin):
 
 	@objc.python_method
 	def _handleDoneEdit(self, sender):
-		columnIndex, rowIndex = sender.getEditedColumnAndRow()
+		columnIndex, rowIndex = self._clickedCellPosition(sender)
 		if columnIndex is None or rowIndex is None:
-			return
-		if columnIndex < 0 or rowIndex < 0:
 			return
 		if columnIndex >= len(self._doneColumnKeys):
 			return
@@ -433,6 +420,24 @@ class GlyphsToDoPlugin(PalettePlugin):
 		return None
 
 	@objc.python_method
+	def _clickedCellPosition(self, listView):
+		columnIndex = rowIndex = None
+		try:
+			tableView = listView._tableView
+			columnIndex = tableView.clickedColumn()
+			rowIndex = tableView.clickedRow()
+		except Exception:
+			pass
+		editedColumn, editedRow = listView.getEditedColumnAndRow()
+		if (columnIndex is None or columnIndex < 0) and editedColumn is not None and editedColumn >= 0:
+			columnIndex = editedColumn
+		if (rowIndex is None or rowIndex < 0) and editedRow is not None and editedRow >= 0:
+			rowIndex = editedRow
+		if columnIndex is None or rowIndex is None or columnIndex < 0 or rowIndex < 0:
+			return None, None
+		return columnIndex, rowIndex
+
+	@objc.python_method
 	def _openGlyphForRow(self, sender, row):
 		if sender == self.paletteWindow.group.todoList:
 			index = self._indexFromActiveRow(row)
@@ -454,23 +459,41 @@ class GlyphsToDoPlugin(PalettePlugin):
 		glyph = font.glyphs[glyphName]
 		if glyph is None:
 			return
-		if glyphName.startswith('/'):
-			glyphCommand = glyphName
-		else:
-			glyphCommand = "/%s" % glyphName
+		layer = self._layerForGlyph(glyph)
+		if layer is None:
+			return
+		layersToOpen = [layer]
 		document = getattr(font, 'parent', None)
 		if document:
 			try:
 				windowController = document.windowController()
 				if windowController:
-					windowController.addTabWithString_(glyphCommand)
+					windowController.addTabWithLayers_(layersToOpen)
 					return
 			except Exception:
 				pass
 		try:
-			font.newTab(glyphCommand)
+			font.newTab(layersToOpen)
 		except Exception:
 			self.logToConsole(f"Glyphs-ToDo: unable to open glyph '{glyphName}'")
+
+	@objc.python_method
+	def _layerForGlyph(self, glyph):
+		try:
+			font = glyph.parent
+			if font is None:
+				return glyph.layers[0]
+			currentMaster = font.selectedFontMaster
+			if currentMaster and currentMaster.id in glyph.layers:
+				return glyph.layers[currentMaster.id]
+		except Exception:
+			pass
+		try:
+			if glyph.layers:
+				return glyph.layers[0]
+		except Exception:
+			pass
+		return None
 
 	@objc.python_method
 	def _markDone(self, index, state):

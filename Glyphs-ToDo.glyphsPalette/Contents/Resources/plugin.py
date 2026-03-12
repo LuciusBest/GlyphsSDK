@@ -733,7 +733,6 @@ class GlyphsToDoPlugin(PalettePlugin):
 			self._suggestionList.set(suggestions)
 			self._suggestionList.show(True)
 			self._suggestionList.setSelection([0])
-			self._positionSuggestionList()
 
 	@objc.python_method
 	def _hideSuggestions(self):
@@ -743,103 +742,6 @@ class GlyphsToDoPlugin(PalettePlugin):
 		self._currentSuggestions = []
 		self._selectedSuggestionIndex = -1
 		self._currentTokenRange = None
-
-	@objc.python_method
-	def _positionSuggestionList(self):
-		if not self._suggestionList:
-			return
-		scrollView = getattr(self._suggestionList, '_nsObject', None)
-		if scrollView is None:
-			return
-		superview = scrollView.superview()
-		if superview is None:
-			return
-		targetRect = self._caretRectRelativeToView(superview)
-		if targetRect is None:
-			targetRect = self._textFieldRectRelativeToView(superview)
-		if targetRect is None:
-			return
-		fieldRect = self._textFieldRectRelativeToView(superview)
-		frame = scrollView.frame()
-		bounds = superview.bounds()
-		padding = 6.0
-		minWidth = 140.0
-		maxWidth = max(60.0, bounds.size.width - (padding * 2.0))
-		if fieldRect is not None:
-			desiredWidth = max(fieldRect.size.width, minWidth)
-		else:
-			desiredWidth = frame.size.width or minWidth
-		width = min(max(desiredWidth, minWidth), maxWidth)
-		height = frame.size.height or 120.0
-		isFlipped = bool(superview.isFlipped()) if hasattr(superview, 'isFlipped') else False
-		verticalSpacing = 4.0
-		if isFlipped:
-			preferredY = targetRect.origin.y + targetRect.size.height + verticalSpacing
-			if preferredY + height > bounds.size.height - padding:
-				preferredY = targetRect.origin.y - height - verticalSpacing
-		else:
-			preferredY = targetRect.origin.y - height - verticalSpacing
-			if preferredY < padding:
-				preferredY = targetRect.origin.y + targetRect.size.height + verticalSpacing
-		minY = padding
-		maxY = max(minY, bounds.size.height - height - padding)
-		y = min(max(preferredY, minY), maxY)
-		baseX = targetRect.origin.x
-		minX = padding
-		maxX = max(minX, bounds.size.width - width - padding)
-		x = min(max(baseX, minX), maxX)
-		scrollView.setFrame_(NSMakeRect(x, y, width, height))
-
-	@objc.python_method
-	def _caretRectRelativeToView(self, view):
-		field = self.paletteWindow.group.newTaskField
-		if not field:
-			return None
-		nsField = getattr(field, '_nsObject', None)
-		if nsField is None:
-			return None
-		window = nsField.window()
-		if window is None:
-			return None
-		editor = nsField.currentEditor()
-		if editor is None:
-			window.makeFirstResponder_(nsField)
-			editor = nsField.currentEditor()
-		if editor is None:
-			return None
-		_, cursor = self._currentTaskFieldState()
-		try:
-			charRect = editor.firstRectForCharacterRange_actualRange_((cursor, 0), None)
-		except Exception:
-			charRect = None
-		if charRect is None:
-			return None
-		try:
-			windowRect = window.convertRectFromScreen_(charRect)
-		except Exception:
-			return None
-		try:
-			localRect = view.convertRect_fromView_(windowRect, None)
-		except Exception:
-			return None
-		return localRect
-
-	@objc.python_method
-	def _textFieldRectRelativeToView(self, view):
-		field = self.paletteWindow.group.newTaskField
-		if not field:
-			return None
-		nsField = getattr(field, '_nsObject', None)
-		if nsField is None:
-			return None
-		fieldSuperview = nsField.superview()
-		fieldFrame = nsField.frame()
-		if fieldSuperview is None or view is None:
-			return fieldFrame
-		try:
-			return view.convertRect_fromView_(fieldFrame, fieldSuperview)
-		except Exception:
-			return fieldFrame
 
 	@objc.python_method
 	def _moveSuggestion(self, delta):

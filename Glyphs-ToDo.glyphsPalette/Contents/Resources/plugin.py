@@ -747,21 +747,23 @@ class GlyphsToDoPlugin(PalettePlugin):
 		self._log('_showSuggestions displaying %d item(s)' % len(suggestions))
 		self._currentSuggestions = suggestions
 		self._selectedSuggestionIndex = 0
-		if self._suggestionList:
-			self._suggestionList.set(suggestions)
-			self._suggestionList.show(True)
-			self._setSuggestionListHidden(False)
-			self._suggestionList.setSelection([0])
-			self._positionSuggestionList()
-		else:
-			self._log('_suggestionList missing')
+		listView = self._ensureSuggestionList()
+		if not listView:
+			self._log('_showSuggestions cannot obtain list view')
+			return
+		listView.set(suggestions)
+		listView.show(True)
+		self._setSuggestionListHidden(False)
+		listView.setSelection([0])
+		self._positionSuggestionList()
 
 	@objc.python_method
 	def _hideSuggestions(self):
 		self._log('_hideSuggestions')
-		if self._suggestionList:
-			self._suggestionList.show(False)
-			self._suggestionList.set([])
+		listView = self._ensureSuggestionList()
+		if listView:
+			listView.show(False)
+			listView.set([])
 			self._setSuggestionListHidden(True)
 		self._currentSuggestions = []
 		self._selectedSuggestionIndex = -1
@@ -814,7 +816,7 @@ class GlyphsToDoPlugin(PalettePlugin):
 
 	@objc.python_method
 	def _suggestionListViewAndContainer(self):
-		if not self._suggestionList:
+		if not self._ensureSuggestionList():
 			self._log('_suggestionListViewAndContainer no suggestion list')
 			return (None, None)
 		groupView = self.paletteWindow.group.getNSView()
@@ -915,7 +917,7 @@ class GlyphsToDoPlugin(PalettePlugin):
 
 	@objc.python_method
 	def _setSuggestionListHidden(self, hidden):
-		if not self._suggestionList:
+		if not self._ensureSuggestionList():
 			self._log('_setSuggestionListHidden no suggestion list')
 			return
 		view = getattr(self._suggestionList, '_scrollView', None)
@@ -936,8 +938,43 @@ class GlyphsToDoPlugin(PalettePlugin):
 		index = self._selectedSuggestionIndex if self._selectedSuggestionIndex is not None else 0
 		index = (index + delta) % len(self._currentSuggestions)
 		self._selectedSuggestionIndex = index
+		listView = self._ensureSuggestionList()
+		if listView:
+			listView.setSelection([index])
+
+	@objc.python_method
+	def _ensureSuggestionList(self):
 		if self._suggestionList:
-			self._suggestionList.setSelection([index])
+			return self._suggestionList
+		group = getattr(self.paletteWindow, 'group', None)
+		if group is None:
+			self._log('_ensureSuggestionList missing group')
+			return None
+		existing = getattr(group, 'suggestionList', None)
+		if existing is not None:
+			self._suggestionList = existing
+			return self._suggestionList
+		try:
+			group.suggestionList = List(
+				(10, 48, -10, 120),
+				[],
+				columnDescriptions=[
+					{'title': Glyphs.localize({'en': 'Suggestion', 'fr': 'Suggestion'}), 'key': 'label'},
+					{'title': Glyphs.localize({'en': 'Type', 'fr': 'Type'}), 'key': 'kind', 'width': 90},
+				],
+				showColumnTitles=False,
+				enableDelete=False,
+				allowsMultipleSelection=False,
+				rowHeight=20,
+				selectionCallback=self._suggestionSelectionChanged,
+				doubleClickCallback=self._suggestionDoubleClicked,
+			)
+			group.suggestionList.show(False)
+			self._suggestionList = group.suggestionList
+		except Exception as error:
+			self._log('_ensureSuggestionList failed:', error)
+			self._suggestionList = None
+		return self._suggestionList
 
 	@objc.python_method
 	def _acceptCurrentSuggestion(self):

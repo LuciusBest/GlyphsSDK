@@ -332,6 +332,7 @@ class GlyphsToDoPlugin(PalettePlugin):
 		self._glyphNames = []
 		self._glyphLookup = {}
 		self._glyphNameSet = set()
+		self._masterNames = []
 		self._hoverPanel = None
 		self._hoverTracker = None
 		self._suggestionTypeColumnWidth = 70
@@ -596,12 +597,15 @@ class GlyphsToDoPlugin(PalettePlugin):
 				self._hideHoverActions()
 			return
 
-		if font is self._activeFont:
-			return
+		if font is not self._activeFont:
+			self._activeFont = font
+			self.todoItems = self._loadTasks(font)
+			self._refreshList()
 
-		self._activeFont = font
-		self.todoItems = self._loadTasks(font)
-		self._refreshList()
+		self._updateFontCaches(font)
+
+	@objc.python_method
+	def _updateFontCaches(self, font):
 		if font:
 			self._glyphNames = sorted(
 				[glyph.name for glyph in font.glyphs if glyph.name],
@@ -612,10 +616,15 @@ class GlyphsToDoPlugin(PalettePlugin):
 				lower = name.lower()
 				self._glyphLookup.setdefault(lower, []).append(name)
 			self._glyphNameSet = set(self._glyphNames)
+			self._masterNames = sorted(
+				[master.name for master in getattr(font, 'masters', []) if getattr(master, 'name', None)],
+				key=lambda n: n.lower(),
+			)
 		else:
 			self._glyphNames = []
 			self._glyphLookup = {}
 			self._glyphNameSet = set()
+			self._masterNames = []
 
 	@objc.python_method
 	def minHeight(self):
@@ -743,6 +752,16 @@ class GlyphsToDoPlugin(PalettePlugin):
 					break
 		items.extend(categoryItems)
 		items.extend(glyphItems)
+		masterItems = []
+		for masterName in self._masterNames:
+			if not prefixLower or masterName.lower().startswith(prefixLower):
+				masterItems.append({
+					'label': "/%s" % masterName,
+					'kind': Glyphs.localize({'en': 'Master', 'fr': 'Master'}),
+					'type': 'master',
+					'value': masterName,
+				})
+		items.extend(masterItems)
 		return items
 
 	@objc.python_method

@@ -945,6 +945,7 @@ class GlyphsToDoPlugin(PalettePlugin):
 	@objc.python_method
 	def _ensureSuggestionList(self):
 		if self._suggestionList:
+			self._log('_ensureSuggestionList reusing cached list')
 			return self._suggestionList
 		group = getattr(self.paletteWindow, 'group', None)
 		if group is None:
@@ -952,8 +953,10 @@ class GlyphsToDoPlugin(PalettePlugin):
 			return None
 		existing = getattr(group, 'suggestionList', None)
 		if existing is not None:
+			self._log('_ensureSuggestionList found existing list on group')
 			self._suggestionList = existing
 			return self._suggestionList
+		self._log('_ensureSuggestionList rebuilding suggestion list UI')
 		try:
 			group.suggestionList = List(
 				(10, 48, -10, 120),
@@ -971,6 +974,7 @@ class GlyphsToDoPlugin(PalettePlugin):
 			)
 			group.suggestionList.show(False)
 			self._suggestionList = group.suggestionList
+			self._log('_ensureSuggestionList rebuilt list successfully')
 		except Exception as error:
 			self._log('_ensureSuggestionList failed:', error)
 			self._suggestionList = None

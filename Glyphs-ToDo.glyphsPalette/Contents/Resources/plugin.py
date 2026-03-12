@@ -334,10 +334,14 @@ class GlyphsToDoPlugin(PalettePlugin):
 		if font is self._activeFont:
 			return
 
-			self._activeFont = font
-			self.todoItems = self._loadTasks(font)
-			self._refreshList()
-			self._glyphNames = sorted([glyph.name for glyph in font.glyphs if glyph.name], key=lambda n: n.lower())
+		self._activeFont = font
+		self.todoItems = self._loadTasks(font)
+		self._refreshList()
+		if font:
+			self._glyphNames = sorted(
+				[glyph.name for glyph in font.glyphs if glyph.name],
+				key=lambda n: n.lower(),
+			)
 			self._glyphLookup = {name.lower(): name for name in self._glyphNames}
 		else:
 			self._glyphNames = []

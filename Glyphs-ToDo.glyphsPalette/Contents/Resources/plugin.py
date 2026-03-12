@@ -622,10 +622,22 @@ class GlyphsToDoPlugin(PalettePlugin):
 	def __file__(self):
 		return __file__
 
+	@objc.python_method
+	def _log(self, *parts):
+		try:
+			message = ' '.join(str(part) for part in parts)
+		except Exception:
+			message = ' '.join([repr(part) for part in parts])
+		try:
+			print('[Glyphs-ToDo]', message)
+		except Exception:
+			pass
+
 	# --- UI helpers ---
 
 	@objc.python_method
 	def _taskFieldDidChange(self):
+		self._log('_taskFieldDidChange')
 		self._pendingGlyphName = None
 		self._pendingCategoryKey = None
 		self._updateSuggestions()
@@ -662,15 +674,19 @@ class GlyphsToDoPlugin(PalettePlugin):
 	@objc.python_method
 	def _updateSuggestions(self):
 		text, cursor = self._currentTaskFieldState()
+		self._log('_updateSuggestions text="%s" cursor=%d' % (text, cursor))
 		token, start, end = self._detectSlashToken(text, cursor)
 		if not token:
+			self._log('no slash token at cursor')
 			self._hideSuggestions()
 			return
 		suggestions = self._buildSuggestions(token[1:])
+		self._log('found token "%s" -> %d suggestion(s)' % (token, len(suggestions)))
 		self._currentTokenRange = (start, end)
 		if suggestions:
 			self._showSuggestions(suggestions)
 		else:
+			self._log('no suggestions to show')
 			self._hideSuggestions()
 
 	@objc.python_method
@@ -725,8 +741,10 @@ class GlyphsToDoPlugin(PalettePlugin):
 	@objc.python_method
 	def _showSuggestions(self, suggestions):
 		if not suggestions:
+			self._log('_showSuggestions called without suggestions')
 			self._hideSuggestions()
 			return
+		self._log('_showSuggestions displaying %d item(s)' % len(suggestions))
 		self._currentSuggestions = suggestions
 		self._selectedSuggestionIndex = 0
 		if self._suggestionList:
@@ -735,9 +753,12 @@ class GlyphsToDoPlugin(PalettePlugin):
 			self._setSuggestionListHidden(False)
 			self._suggestionList.setSelection([0])
 			self._positionSuggestionList()
+		else:
+			self._log('_suggestionList missing')
 
 	@objc.python_method
 	def _hideSuggestions(self):
+		self._log('_hideSuggestions')
 		if self._suggestionList:
 			self._suggestionList.show(False)
 			self._suggestionList.set([])
@@ -750,11 +771,14 @@ class GlyphsToDoPlugin(PalettePlugin):
 	def _positionSuggestionList(self):
 		viewToMove, containerView = self._suggestionListViewAndContainer()
 		if viewToMove is None or containerView is None:
+			self._log('_positionSuggestionList missing viewToMove or container')
 			return
 		targetRect = self._caretRectRelativeToView(containerView)
 		if targetRect is None:
+			self._log('_positionSuggestionList caret rect unavailable')
 			targetRect = self._textFieldRectRelativeToView(containerView)
 		if targetRect is None:
+			self._log('_positionSuggestionList no fallback rect')
 			return
 		fieldRect = self._textFieldRectRelativeToView(containerView)
 		frame = viewToMove.frame()
@@ -786,13 +810,16 @@ class GlyphsToDoPlugin(PalettePlugin):
 		maxX = max(minX, bounds.size.width - width - padding)
 		x = min(max(baseX, minX), maxX)
 		viewToMove.setFrame_(NSMakeRect(x, y, width, height))
+		self._log('_positionSuggestionList frame set to (%.1f, %.1f, %.1f, %.1f)' % (x, y, width, height))
 
 	@objc.python_method
 	def _suggestionListViewAndContainer(self):
 		if not self._suggestionList:
+			self._log('_suggestionListViewAndContainer no suggestion list')
 			return (None, None)
 		groupView = self.paletteWindow.group.getNSView()
 		if groupView is None:
+			self._log('_suggestionListViewAndContainer missing group view')
 			return (None, None)
 		viewCandidate = getattr(self._suggestionList, '_scrollView', None)
 		getView = getattr(self._suggestionList, 'getNSView', None)
@@ -804,6 +831,7 @@ class GlyphsToDoPlugin(PalettePlugin):
 		if viewCandidate is None:
 			viewCandidate = getattr(self._suggestionList, '_nsObject', None)
 		if viewCandidate is None:
+			self._log('_suggestionListViewAndContainer missing candidate view')
 			return (None, None)
 		current = viewCandidate
 		superview = current.superview()
@@ -813,27 +841,33 @@ class GlyphsToDoPlugin(PalettePlugin):
 			current = superview
 			superview = current.superview()
 		if superview is None:
+			self._log('_suggestionListViewAndContainer chain did not reach group view')
 			return (None, None)
 		return current, superview
 
 	@objc.python_method
 	def _caretRectRelativeToView(self, view):
 		if view is None:
+			self._log('_caretRectRelativeToView view is None')
 			return None
 		field = self.paletteWindow.group.newTaskField
 		if not field:
+			self._log('_caretRectRelativeToView missing field')
 			return None
 		nsField = getattr(field, '_nsObject', None)
 		if nsField is None:
+			self._log('_caretRectRelativeToView missing nsField')
 			return None
 		window = nsField.window()
 		if window is None:
+			self._log('_caretRectRelativeToView missing window')
 			return None
 		editor = nsField.currentEditor()
 		if editor is None:
 			window.makeFirstResponder_(nsField)
 			editor = nsField.currentEditor()
 		if editor is None:
+			self._log('_caretRectRelativeToView missing editor')
 			return None
 		_, cursor = self._currentTaskFieldState()
 		try:
@@ -841,44 +875,54 @@ class GlyphsToDoPlugin(PalettePlugin):
 		except Exception:
 			charRect = None
 		if charRect is None:
+			self._log('_caretRectRelativeToView charRect unavailable for cursor %d' % cursor)
 			return None
 		try:
 			windowRect = window.convertRectFromScreen_(charRect)
 		except Exception:
+			self._log('_caretRectRelativeToView convertRectFromScreen failed')
 			return None
 		try:
 			localRect = view.convertRect_fromView_(windowRect, None)
 		except Exception:
+			self._log('_caretRectRelativeToView convertRect_fromView failed')
 			return None
 		return localRect
 
 	@objc.python_method
 	def _textFieldRectRelativeToView(self, view):
 		if view is None:
+			self._log('_textFieldRectRelativeToView view is None')
 			return None
 		field = self.paletteWindow.group.newTaskField
 		if not field:
+			self._log('_textFieldRectRelativeToView missing field')
 			return None
 		nsField = getattr(field, '_nsObject', None)
 		if nsField is None:
+			self._log('_textFieldRectRelativeToView missing nsField')
 			return None
 		fieldSuperview = nsField.superview()
 		fieldFrame = nsField.frame()
 		if fieldSuperview is None:
+			self._log('_textFieldRectRelativeToView missing field superview')
 			return fieldFrame
 		try:
 			return view.convertRect_fromView_(fieldFrame, fieldSuperview)
 		except Exception:
+			self._log('_textFieldRectRelativeToView convert failed')
 			return fieldFrame
 
 	@objc.python_method
 	def _setSuggestionListHidden(self, hidden):
 		if not self._suggestionList:
+			self._log('_setSuggestionListHidden no suggestion list')
 			return
 		view = getattr(self._suggestionList, '_scrollView', None)
 		if view is None:
 			view = getattr(self._suggestionList, '_nsObject', None)
 		if view is None:
+			self._log('_setSuggestionListHidden no native view to hide/show')
 			return
 		try:
 			view.setHidden_(hidden)

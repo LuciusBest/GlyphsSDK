@@ -167,6 +167,7 @@ class HoverActionPanel(NSView):
 			self.addSubview_(button)
 		return self
 
+	@objc.python_method
 	def _createButton(self, actionName):
 		button = NSButton.alloc().initWithFrame_(NSMakeRect(0, 0, 24, 24))
 		button.setBordered_(False)
@@ -175,6 +176,7 @@ class HoverActionPanel(NSView):
 		button.setAction_(getattr(self, actionName))
 		return button
 
+	@objc.python_method
 	def setButtonImages(self, openImage, doneImage, deleteImage):
 		if openImage:
 			self.openButton.setImage_(openImage)
@@ -192,6 +194,7 @@ class HoverActionPanel(NSView):
 		objc.super(HoverActionPanel, self).setFrame_(frame)
 		self._layoutButtons()
 
+	@objc.python_method
 	def _layoutButtons(self):
 		width = self.bounds().size.width
 		height = self.bounds().size.height
@@ -203,6 +206,7 @@ class HoverActionPanel(NSView):
 			button.setFrame_(NSMakeRect(startX, (height - 20) / 2.0, buttonWidth, 20))
 			startX += buttonWidth + gap
 
+	@objc.python_method
 	def presentInTable_atRow_(self, tableView, row):
 		rowRect = tableView.rectOfRow_(row)
 		if rowRect.size.height <= 0:

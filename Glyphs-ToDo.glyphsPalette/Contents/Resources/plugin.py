@@ -91,6 +91,7 @@ class GlyphsToDoPlugin(PalettePlugin):
 		self._currentTokenRange = None
 		self._glyphNames = []
 		self._glyphLookup = {}
+		self._glyphNameSet = set()
 
 		width, height = 260, 360
 		self.paletteWindow = Window((width, height))
@@ -361,10 +362,15 @@ class GlyphsToDoPlugin(PalettePlugin):
 				[glyph.name for glyph in font.glyphs if glyph.name],
 				key=lambda n: n.lower(),
 			)
-			self._glyphLookup = {name.lower(): name for name in self._glyphNames}
+			self._glyphLookup = {}
+			for name in self._glyphNames:
+				lower = name.lower()
+				self._glyphLookup.setdefault(lower, []).append(name)
+			self._glyphNameSet = set(self._glyphNames)
 		else:
 			self._glyphNames = []
 			self._glyphLookup = {}
+			self._glyphNameSet = set()
 
 	@objc.python_method
 	def minHeight(self):
@@ -653,7 +659,7 @@ class GlyphsToDoPlugin(PalettePlugin):
 			token = name.strip()
 			if not token:
 				continue
-			key = token.lower()
+			key = token
 			if key in seen:
 				continue
 			seen.add(key)
@@ -664,7 +670,16 @@ class GlyphsToDoPlugin(PalettePlugin):
 	def _resolveGlyphName(self, name):
 		if not name:
 			return ''
-		return self._glyphLookup.get(name.lower(), name)
+		if name in self._glyphNameSet:
+			return name
+		lower = name.lower()
+		candidates = self._glyphLookup.get(lower)
+		if candidates:
+			for candidate in candidates:
+				if candidate == name:
+					return candidate
+			return candidates[0]
+		return name
 
 	@objc.python_method
 	def _buildActiveColumns(self):
@@ -863,7 +878,7 @@ class GlyphsToDoPlugin(PalettePlugin):
 			resolved = self._resolveGlyphName(name)
 			if not resolved:
 				continue
-			key = resolved.lower()
+			key = resolved
 			if key in seen:
 				continue
 			seen.add(key)

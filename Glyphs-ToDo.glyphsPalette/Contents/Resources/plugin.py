@@ -334,6 +334,7 @@ class GlyphsToDoPlugin(PalettePlugin):
 		self._glyphNameSet = set()
 		self._hoverPanel = None
 		self._hoverTracker = None
+		self._suggestionTypeColumnWidth = 70
 
 		width, height = 260, 360
 		self.paletteWindow = Window((width, height))
@@ -406,7 +407,12 @@ class GlyphsToDoPlugin(PalettePlugin):
 			[],
 			columnDescriptions=[
 				{'title': Glyphs.localize({'en': 'Suggestion', 'fr': 'Suggestion'}), 'key': 'label'},
-				{'title': Glyphs.localize({'en': 'Type', 'fr': 'Type'}), 'key': 'kind', 'width': 80, 'lineBreakMode': NSLineBreakByTruncatingTail},
+				{
+					'title': Glyphs.localize({'en': 'Type', 'fr': 'Type'}),
+					'key': 'kind',
+					'width': self._suggestionTypeColumnWidth,
+					'lineBreakMode': NSLineBreakByTruncatingTail,
+				},
 			],
 			showColumnTitles=False,
 			enableDelete=False,
@@ -790,7 +796,8 @@ class GlyphsToDoPlugin(PalettePlugin):
 		minWidth = 140.0
 		maxWidth = max(60.0, bounds.size.width - (padding * 2.0))
 		if fieldRect is not None:
-			desiredWidth = max(fieldRect.size.width, minWidth)
+			extraWidth = self._suggestionTypeColumnWidth if hasattr(self, '_suggestionTypeColumnWidth') else 0
+			desiredWidth = max(fieldRect.size.width + extraWidth, minWidth)
 		else:
 			desiredWidth = frame.size.width or minWidth
 		width = min(max(desiredWidth, minWidth), maxWidth)
@@ -966,7 +973,12 @@ class GlyphsToDoPlugin(PalettePlugin):
 				[],
 				columnDescriptions=[
 					{'title': Glyphs.localize({'en': 'Suggestion', 'fr': 'Suggestion'}), 'key': 'label'},
-					{'title': Glyphs.localize({'en': 'Type', 'fr': 'Type'}), 'key': 'kind', 'width': 80, 'lineBreakMode': NSLineBreakByTruncatingTail},
+					{
+						'title': Glyphs.localize({'en': 'Type', 'fr': 'Type'}),
+						'key': 'kind',
+						'width': self._suggestionTypeColumnWidth,
+						'lineBreakMode': NSLineBreakByTruncatingTail,
+					},
 				],
 				showColumnTitles=False,
 				enableDelete=False,
@@ -1005,9 +1017,13 @@ class GlyphsToDoPlugin(PalettePlugin):
 		except Exception:
 			pass
 		try:
-			typeColumn.setWidth_(80)
-			typeColumn.setMinWidth_(60)
+			width = self._suggestionTypeColumnWidth
+			typeColumn.setWidth_(width)
+			typeColumn.setMinWidth_(max(40, width - 20))
 			typeColumn.setResizingMask_(0)
+			cell = typeColumn.dataCell()
+			if cell and hasattr(cell, 'setLineBreakMode_'):
+				cell.setLineBreakMode_(NSLineBreakByTruncatingTail)
 		except Exception:
 			pass
 

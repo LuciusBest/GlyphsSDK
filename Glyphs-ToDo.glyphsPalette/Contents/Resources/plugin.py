@@ -597,10 +597,14 @@ class GlyphsToDoPlugin(PalettePlugin):
 			if word.startswith('/') and len(word) > 1:
 				token = word[1:]
 				lower = token.lower()
+				resolvedGlyph = False
 				if glyphName is None and lower in self._glyphLookup:
 					glyphName = self._glyphLookup[lower]
+					resolvedGlyph = True
 				if categoryKey is None and lower in self._categoryLookup:
 					categoryKey = self._categoryLookup[lower]
+				if glyphName is None and not resolvedGlyph and lower not in self._categoryLookup:
+					glyphName = token
 				cleanWords.append(token)
 			else:
 				cleanWords.append(word)

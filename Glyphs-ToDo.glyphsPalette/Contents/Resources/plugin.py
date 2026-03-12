@@ -620,11 +620,13 @@ class GlyphsToDoPlugin(PalettePlugin):
 				[master.name for master in getattr(font, 'masters', []) if getattr(master, 'name', None)],
 				key=lambda n: n.lower(),
 			)
+			self._log('_updateFontCaches glyphs=%d masters=%d' % (len(self._glyphNames), len(self._masterNames)))
 		else:
 			self._glyphNames = []
 			self._glyphLookup = {}
 			self._glyphNameSet = set()
 			self._masterNames = []
+			self._log('_updateFontCaches cleared caches')
 
 	@objc.python_method
 	def minHeight(self):
@@ -762,6 +764,7 @@ class GlyphsToDoPlugin(PalettePlugin):
 					'value': masterName,
 				})
 		items.extend(masterItems)
+		self._log('_buildSuggestions master matches=%d' % len(masterItems))
 		return items
 
 	@objc.python_method

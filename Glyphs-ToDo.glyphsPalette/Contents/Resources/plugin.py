@@ -9,11 +9,11 @@ from GlyphsApp import Glyphs, UPDATEINTERFACE
 from GlyphsApp.plugins import PalettePlugin
 from vanilla import (
 	Button,
-	ButtonListCell,
 	EditText,
 	Group,
 	List,
 	PopUpButton,
+	SegmentedButtonListCell,
 	TextBox,
 	Window,
 )
@@ -79,7 +79,7 @@ class GlyphsToDoPlugin(PalettePlugin):
 		filterOptions = [Glyphs.localize({'en': 'All categories', 'fr': 'Toutes categories'})] + self.categoryStrings
 		self.paletteWindow.group.filterPopUp = PopUpButton((10, 96, -10, 22), filterOptions, sizeStyle='small', callback=self._filterChanged)
 
-		activeColumns = self._buildColumnDescriptions(includeDoneButtons=True)
+		activeColumns = self._buildActiveColumns()
 		self.paletteWindow.group.todoList = List(
 			(10, 128, -10, 150),
 			[],
@@ -90,7 +90,7 @@ class GlyphsToDoPlugin(PalettePlugin):
 			drawFocusRing=False,
 			rowHeight=56,
 			doubleClickCallback=self._handleRowDoubleClick,
-			buttonCallback=self._handleActiveButton,
+			editCallback=self._handleActiveEdit,
 		)
 
 		self.paletteWindow.group.doneToggle = Button(
@@ -100,7 +100,7 @@ class GlyphsToDoPlugin(PalettePlugin):
 			sizeStyle='small',
 		)
 
-		doneColumns = self._buildColumnDescriptions(includeDoneButtons=False)
+		doneColumns = self._buildDoneColumns()
 		self.paletteWindow.group.doneList = List(
 			(10, 314, -10, 100),
 			[],
@@ -111,7 +111,7 @@ class GlyphsToDoPlugin(PalettePlugin):
 			drawFocusRing=False,
 			rowHeight=48,
 			doubleClickCallback=self._handleRowDoubleClick,
-			buttonCallback=self._handleDoneButton,
+			editCallback=self._handleDoneEdit,
 		)
 		self.paletteWindow.group.doneList.show(False)
 
@@ -161,14 +161,13 @@ class GlyphsToDoPlugin(PalettePlugin):
 		self._doneIndexMap = []
 
 		for idx, item in enumerate(self.todoItems):
-			displayData = self._formatDisplayItem(item)
 			if item.get('done'):
-				doneItems.append(displayData)
+				doneItems.append(self._doneDisplayItem(item))
 				self._doneIndexMap.append(idx)
 			else:
 				if self._categoryFilter and item.get('category') != self._categoryFilter:
 					continue
-				activeItems.append(displayData)
+				activeItems.append(self._activeDisplayItem(item))
 				self._activeIndexMap.append(idx)
 
 		self.paletteWindow.group.todoList.set(activeItems)
@@ -177,16 +176,30 @@ class GlyphsToDoPlugin(PalettePlugin):
 		self.paletteWindow.group.doneToggle.setTitle(self._doneToggleTitle(len(doneItems)))
 
 	@objc.python_method
-	def _formatDisplayItem(self, item):
+	def _baseDisplayItem(self, item):
 		return {
 			'task': item.get('task', ''),
 			'glyph': item.get('glyph', ''),
 			'category': self._categoryLabelFromKey(item.get('category')),
-			'openGlyph': Glyphs.localize({'en': 'Open', 'fr': 'Ouvrir'}),
-			'doneButton': Glyphs.localize({'en': 'Done', 'fr': 'Fait'}),
-			'deleteButton': Glyphs.localize({'en': 'Delete', 'fr': 'Supprimer'}),
-			'undoButton': Glyphs.localize({'en': 'Undo', 'fr': 'Rouvrir'}),
 		}
+
+	@objc.python_method
+	def _activeDisplayItem(self, item):
+		data = self._baseDisplayItem(item)
+		data.update({
+			'openAction': -1,
+			'statusAction': -1,
+		})
+		return data
+
+	@objc.python_method
+	def _doneDisplayItem(self, item):
+		data = self._baseDisplayItem(item)
+		data.update({
+			'openAction': -1,
+			'doneActions': -1,
+		})
+		return data
 
 	@objc.python_method
 	def _saveTasks(self, font):
@@ -279,25 +292,47 @@ class GlyphsToDoPlugin(PalettePlugin):
 	# --- UI helpers ---
 
 	@objc.python_method
-	def _buildColumnDescriptions(self, includeDoneButtons=True):
+	def _buildActiveColumns(self):
 		taskTitle = Glyphs.localize({'en': 'Task', 'fr': 'Tache'})
 		glyphTitle = Glyphs.localize({'en': 'Glyph', 'fr': 'Glyphe'})
 		categoryTitle = Glyphs.localize({'en': 'Category', 'fr': 'Categorie'})
+		openLabel = Glyphs.localize({'en': 'Open', 'fr': 'Ouvrir'})
+		doneLabel = Glyphs.localize({'en': 'Done', 'fr': 'Fait'})
+		deleteLabel = Glyphs.localize({'en': 'Delete', 'fr': 'Supprimer'})
+
+		openCell = SegmentedButtonListCell([{'title': openLabel}])
+		statusCell = SegmentedButtonListCell([{'title': doneLabel}, {'title': deleteLabel}])
 
 		columns = [
 			{'title': taskTitle, 'key': 'task', 'editable': False, 'width': 150, 'lineBreakMode': NSLineBreakByWordWrapping},
 			{'title': glyphTitle, 'key': 'glyph', 'editable': False, 'width': 70},
-			{'title': categoryTitle, 'key': 'category', 'editable': False, 'width': 80},
-			{'title': '', 'key': 'openGlyph', 'width': 50, 'cell': ButtonListCell(title=Glyphs.localize({'en': 'Open', 'fr': 'Ouvrir'}))},
+			{'title': categoryTitle, 'key': 'category', 'editable': False, 'width': 90},
+			{'title': '', 'key': 'openAction', 'width': 60, 'binding': 'selectedIndex', 'cell': openCell},
+			{'title': '', 'key': 'statusAction', 'width': 120, 'binding': 'selectedIndex', 'cell': statusCell},
 		]
+		self._activeColumnKeys = [col['key'] for col in columns]
+		return columns
 
-		if includeDoneButtons:
-			columns.append({'title': '', 'key': 'doneButton', 'width': 58, 'cell': ButtonListCell(title=Glyphs.localize({'en': 'Done', 'fr': 'Fait'}))})
-			columns.append({'title': '', 'key': 'deleteButton', 'width': 66, 'cell': ButtonListCell(title=Glyphs.localize({'en': 'Delete', 'fr': 'Supprimer'}))})
-		else:
-			columns.append({'title': '', 'key': 'undoButton', 'width': 58, 'cell': ButtonListCell(title=Glyphs.localize({'en': 'Undo', 'fr': 'Rouvrir'}))})
-			columns.append({'title': '', 'key': 'deleteButton', 'width': 66, 'cell': ButtonListCell(title=Glyphs.localize({'en': 'Delete', 'fr': 'Supprimer'}))})
+	@objc.python_method
+	def _buildDoneColumns(self):
+		taskTitle = Glyphs.localize({'en': 'Task', 'fr': 'Tache'})
+		glyphTitle = Glyphs.localize({'en': 'Glyph', 'fr': 'Glyphe'})
+		categoryTitle = Glyphs.localize({'en': 'Category', 'fr': 'Categorie'})
+		openLabel = Glyphs.localize({'en': 'Open', 'fr': 'Ouvrir'})
+		undoLabel = Glyphs.localize({'en': 'Undo', 'fr': 'Rouvrir'})
+		deleteLabel = Glyphs.localize({'en': 'Delete', 'fr': 'Supprimer'})
 
+		openCell = SegmentedButtonListCell([{'title': openLabel}])
+		doneCell = SegmentedButtonListCell([{'title': undoLabel}, {'title': deleteLabel}])
+
+		columns = [
+			{'title': taskTitle, 'key': 'task', 'editable': False, 'width': 150, 'lineBreakMode': NSLineBreakByWordWrapping},
+			{'title': glyphTitle, 'key': 'glyph', 'editable': False, 'width': 70},
+			{'title': categoryTitle, 'key': 'category', 'editable': False, 'width': 90},
+			{'title': '', 'key': 'openAction', 'width': 60, 'binding': 'selectedIndex', 'cell': openCell},
+			{'title': '', 'key': 'doneActions', 'width': 120, 'binding': 'selectedIndex', 'cell': doneCell},
+		]
+		self._doneColumnKeys = [col['key'] for col in columns]
 		return columns
 
 	@objc.python_method
@@ -340,54 +375,50 @@ class GlyphsToDoPlugin(PalettePlugin):
 		self._openGlyphForRow(sender, row[0])
 
 	@objc.python_method
-	def _handleActiveButton(self, sender, info=None):
-		event = info
-		if event is None and hasattr(sender, 'getLastClicked'):
-			event = sender.getLastClicked()
-		if event is None:
-			event = {}
-		row = event.get('row')
-		key = event.get('columnIdentifier')
-		if row is None and hasattr(sender, 'getClickedRow'):
-			row = sender.getClickedRow()
-		if key is None and hasattr(sender, 'getClickedColumnIdentifier'):
-			key = sender.getClickedColumnIdentifier()
-		if row is None or key is None:
+	def _handleActiveEdit(self, sender):
+		columnIndex, rowIndex = sender.getEditedColumnAndRow()
+		if columnIndex is None or rowIndex is None:
 			return
-		targetIndex = self._indexFromActiveRow(row)
+		if columnIndex < 0 or rowIndex < 0:
+			return
+		if columnIndex >= len(self._activeColumnKeys):
+			return
+		targetIndex = self._indexFromActiveRow(rowIndex)
 		if targetIndex is None:
 			return
-		if key == 'openGlyph':
+		columnKey = self._activeColumnKeys[columnIndex]
+		value = sender.get()[rowIndex].get(columnKey)
+		if columnKey == 'openAction' and value == 0:
 			self._openGlyph(targetIndex)
-		elif key == 'doneButton':
-			self._markDone(targetIndex, True)
-		elif key == 'deleteButton':
-			self._deleteTask(targetIndex)
+			self._refreshList()
+		elif columnKey == 'statusAction':
+			if value == 0:
+				self._markDone(targetIndex, True)
+			elif value == 1:
+				self._deleteTask(targetIndex)
 
 	@objc.python_method
-	def _handleDoneButton(self, sender, info=None):
-		event = info
-		if event is None and hasattr(sender, 'getLastClicked'):
-			event = sender.getLastClicked()
-		if event is None:
-			event = {}
-		row = event.get('row')
-		key = event.get('columnIdentifier')
-		if row is None and hasattr(sender, 'getClickedRow'):
-			row = sender.getClickedRow()
-		if key is None and hasattr(sender, 'getClickedColumnIdentifier'):
-			key = sender.getClickedColumnIdentifier()
-		if row is None or key is None:
+	def _handleDoneEdit(self, sender):
+		columnIndex, rowIndex = sender.getEditedColumnAndRow()
+		if columnIndex is None or rowIndex is None:
 			return
-		targetIndex = self._indexFromDoneRow(row)
+		if columnIndex < 0 or rowIndex < 0:
+			return
+		if columnIndex >= len(self._doneColumnKeys):
+			return
+		targetIndex = self._indexFromDoneRow(rowIndex)
 		if targetIndex is None:
 			return
-		if key == 'openGlyph':
+		columnKey = self._doneColumnKeys[columnIndex]
+		value = sender.get()[rowIndex].get(columnKey)
+		if columnKey == 'openAction' and value == 0:
 			self._openGlyph(targetIndex)
-		elif key == 'undoButton':
-			self._markDone(targetIndex, False)
-		elif key == 'deleteButton':
-			self._deleteTask(targetIndex)
+			self._refreshList()
+		elif columnKey == 'doneActions':
+			if value == 0:
+				self._markDone(targetIndex, False)
+			elif value == 1:
+				self._deleteTask(targetIndex)
 
 	@objc.python_method
 	def _indexFromActiveRow(self, row):

@@ -748,7 +748,7 @@ class GlyphsToDoPlugin(PalettePlugin):
 		self._currentSuggestions = suggestions
 		self._selectedSuggestionIndex = 0
 		listView = self._ensureSuggestionList()
-		if not listView:
+		if listView is None:
 			self._log('_showSuggestions cannot obtain list view')
 			return
 		listView.set(suggestions)
@@ -761,7 +761,7 @@ class GlyphsToDoPlugin(PalettePlugin):
 	def _hideSuggestions(self):
 		self._log('_hideSuggestions')
 		listView = self._ensureSuggestionList()
-		if listView:
+		if listView is not None:
 			listView.show(False)
 			listView.set([])
 			self._setSuggestionListHidden(True)
@@ -817,7 +817,7 @@ class GlyphsToDoPlugin(PalettePlugin):
 	@objc.python_method
 	def _suggestionListViewAndContainer(self):
 		listView = self._ensureSuggestionList()
-		if not listView:
+		if listView is None:
 			self._log('_suggestionListViewAndContainer no suggestion list')
 			return (None, None)
 		groupView = self.paletteWindow.group.getNSView()
@@ -919,7 +919,7 @@ class GlyphsToDoPlugin(PalettePlugin):
 	@objc.python_method
 	def _setSuggestionListHidden(self, hidden):
 		listView = self._ensureSuggestionList()
-		if not listView:
+		if listView is None:
 			self._log('_setSuggestionListHidden no suggestion list')
 			return
 		view = getattr(listView, '_scrollView', None)
@@ -941,7 +941,7 @@ class GlyphsToDoPlugin(PalettePlugin):
 		index = (index + delta) % len(self._currentSuggestions)
 		self._selectedSuggestionIndex = index
 		listView = self._ensureSuggestionList()
-		if listView:
+		if listView is not None:
 			listView.setSelection([index])
 
 	@objc.python_method

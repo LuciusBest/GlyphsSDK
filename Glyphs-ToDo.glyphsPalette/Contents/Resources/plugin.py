@@ -732,6 +732,7 @@ class GlyphsToDoPlugin(PalettePlugin):
 		if self._suggestionList:
 			self._suggestionList.set(suggestions)
 			self._suggestionList.show(True)
+			self._setSuggestionListHidden(False)
 			self._suggestionList.setSelection([0])
 			self._positionSuggestionList()
 
@@ -740,6 +741,7 @@ class GlyphsToDoPlugin(PalettePlugin):
 		if self._suggestionList:
 			self._suggestionList.show(False)
 			self._suggestionList.set([])
+			self._setSuggestionListHidden(True)
 		self._currentSuggestions = []
 		self._selectedSuggestionIndex = -1
 		self._currentTokenRange = None
@@ -792,13 +794,13 @@ class GlyphsToDoPlugin(PalettePlugin):
 		groupView = self.paletteWindow.group.getNSView()
 		if groupView is None:
 			return (None, None)
-		viewCandidate = None
+		viewCandidate = getattr(self._suggestionList, '_scrollView', None)
 		getView = getattr(self._suggestionList, 'getNSView', None)
 		if callable(getView):
 			try:
-				viewCandidate = getView()
+				viewCandidate = viewCandidate or getView()
 			except Exception:
-				viewCandidate = None
+				viewCandidate = viewCandidate or None
 		if viewCandidate is None:
 			viewCandidate = getattr(self._suggestionList, '_nsObject', None)
 		if viewCandidate is None:
@@ -868,6 +870,20 @@ class GlyphsToDoPlugin(PalettePlugin):
 			return view.convertRect_fromView_(fieldFrame, fieldSuperview)
 		except Exception:
 			return fieldFrame
+
+	@objc.python_method
+	def _setSuggestionListHidden(self, hidden):
+		if not self._suggestionList:
+			return
+		view = getattr(self._suggestionList, '_scrollView', None)
+		if view is None:
+			view = getattr(self._suggestionList, '_nsObject', None)
+		if view is None:
+			return
+		try:
+			view.setHidden_(hidden)
+		except Exception:
+			pass
 
 	@objc.python_method
 	def _moveSuggestion(self, delta):

@@ -4,7 +4,13 @@ from __future__ import division, print_function, unicode_literals
 import json
 import math
 import objc
-from AppKit import NSLineBreakByWordWrapping
+from AppKit import (
+	NSImageNameFollowLinkFreestandingTemplate,
+	NSImageNameRefreshTemplate,
+	NSImageNameStatusAvailable,
+	NSImageNameTrashEmpty,
+	NSLineBreakByWordWrapping,
+)
 from GlyphsApp import Glyphs, UPDATEINTERFACE
 from GlyphsApp.plugins import PalettePlugin
 from vanilla import (
@@ -294,19 +300,27 @@ class GlyphsToDoPlugin(PalettePlugin):
 		taskTitle = Glyphs.localize({'en': 'Task', 'fr': 'Tache'})
 		glyphTitle = Glyphs.localize({'en': 'Glyph', 'fr': 'Glyphe'})
 		categoryTitle = Glyphs.localize({'en': 'Category', 'fr': 'Categorie'})
-		openLabel = Glyphs.localize({'en': 'Open', 'fr': 'Ouvrir'})
-		doneLabel = Glyphs.localize({'en': 'Done', 'fr': 'Fait'})
-		deleteLabel = Glyphs.localize({'en': 'Delete', 'fr': 'Supprimer'})
-
-		openCell = SegmentedButtonListCell([{'title': openLabel}])
-		statusCell = SegmentedButtonListCell([{'title': doneLabel}, {'title': deleteLabel}])
+		openCell = SegmentedButtonListCell([{
+			'imageNamed': NSImageNameFollowLinkFreestandingTemplate,
+			'toolTip': Glyphs.localize({'en': 'Open glyph', 'fr': 'Ouvrir le glyphe'}),
+		}])
+		statusCell = SegmentedButtonListCell([
+			{
+				'imageNamed': NSImageNameStatusAvailable,
+				'toolTip': Glyphs.localize({'en': 'Mark as done', 'fr': 'Marquer comme fait'}),
+			},
+			{
+				'imageNamed': NSImageNameTrashEmpty,
+				'toolTip': Glyphs.localize({'en': 'Delete task', 'fr': 'Supprimer la tache'}),
+			},
+		])
 
 		columns = [
 			{'title': taskTitle, 'key': 'task', 'editable': False, 'width': 150, 'lineBreakMode': NSLineBreakByWordWrapping},
 			{'title': glyphTitle, 'key': 'glyph', 'editable': False, 'width': 70},
 			{'title': categoryTitle, 'key': 'category', 'editable': False, 'width': 90},
-			{'title': '', 'key': 'openAction', 'editable': True, 'width': 60, 'binding': 'selectedIndex', 'cell': openCell},
-			{'title': '', 'key': 'statusAction', 'editable': True, 'width': 120, 'binding': 'selectedIndex', 'cell': statusCell},
+			{'title': '', 'key': 'openAction', 'editable': True, 'width': 40, 'binding': 'selectedIndex', 'cell': openCell},
+			{'title': '', 'key': 'statusAction', 'editable': True, 'width': 80, 'binding': 'selectedIndex', 'cell': statusCell},
 		]
 		self._activeColumnKeys = [col['key'] for col in columns]
 		return columns
@@ -316,19 +330,27 @@ class GlyphsToDoPlugin(PalettePlugin):
 		taskTitle = Glyphs.localize({'en': 'Task', 'fr': 'Tache'})
 		glyphTitle = Glyphs.localize({'en': 'Glyph', 'fr': 'Glyphe'})
 		categoryTitle = Glyphs.localize({'en': 'Category', 'fr': 'Categorie'})
-		openLabel = Glyphs.localize({'en': 'Open', 'fr': 'Ouvrir'})
-		undoLabel = Glyphs.localize({'en': 'Undo', 'fr': 'Rouvrir'})
-		deleteLabel = Glyphs.localize({'en': 'Delete', 'fr': 'Supprimer'})
-
-		openCell = SegmentedButtonListCell([{'title': openLabel}])
-		doneCell = SegmentedButtonListCell([{'title': undoLabel}, {'title': deleteLabel}])
+		openCell = SegmentedButtonListCell([{
+			'imageNamed': NSImageNameFollowLinkFreestandingTemplate,
+			'toolTip': Glyphs.localize({'en': 'Open glyph', 'fr': 'Ouvrir le glyphe'}),
+		}])
+		doneCell = SegmentedButtonListCell([
+			{
+				'imageNamed': NSImageNameRefreshTemplate,
+				'toolTip': Glyphs.localize({'en': 'Move back to todo', 'fr': 'Replacer dans TODO'}),
+			},
+			{
+				'imageNamed': NSImageNameTrashEmpty,
+				'toolTip': Glyphs.localize({'en': 'Delete task', 'fr': 'Supprimer la tache'}),
+			},
+		])
 
 		columns = [
 			{'title': taskTitle, 'key': 'task', 'editable': False, 'width': 150, 'lineBreakMode': NSLineBreakByWordWrapping},
 			{'title': glyphTitle, 'key': 'glyph', 'editable': False, 'width': 70},
 			{'title': categoryTitle, 'key': 'category', 'editable': False, 'width': 90},
-			{'title': '', 'key': 'openAction', 'editable': True, 'width': 60, 'binding': 'selectedIndex', 'cell': openCell},
-			{'title': '', 'key': 'doneActions', 'editable': True, 'width': 120, 'binding': 'selectedIndex', 'cell': doneCell},
+			{'title': '', 'key': 'openAction', 'editable': True, 'width': 40, 'binding': 'selectedIndex', 'cell': openCell},
+			{'title': '', 'key': 'doneActions', 'editable': True, 'width': 80, 'binding': 'selectedIndex', 'cell': doneCell},
 		]
 		self._doneColumnKeys = [col['key'] for col in columns]
 		return columns

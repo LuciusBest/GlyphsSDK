@@ -333,6 +333,7 @@ class GlyphsToDoPlugin(PalettePlugin):
 		self._glyphLookup = {}
 		self._glyphNameSet = set()
 		self._masterNames = []
+		self._masterLookup = {}
 		self._hoverPanel = None
 		self._hoverTracker = None
 		self._suggestionTypeColumnWidth = 70
@@ -450,7 +451,7 @@ class GlyphsToDoPlugin(PalettePlugin):
 		rawText = (self.paletteWindow.group.newTaskField.get() or '').strip()
 		if not rawText:
 			return
-		cleanText, glyphTokens, categoryFromText = self._extractMetadataFromText(rawText)
+		cleanText, glyphTokens, categoryFromText, masterTokens = self._extractMetadataFromText(rawText)
 		glyphNames = self._normalizeGlyphList(glyphTokens)
 		glyphNames = [self._resolveGlyphName(name) for name in glyphNames]
 		categoryKey = categoryFromText
@@ -458,13 +459,14 @@ class GlyphsToDoPlugin(PalettePlugin):
 			categoryKey = self._categoryKeyFromIndex(0)
 
 		if not cleanText:
-			cleanText = ' '.join(glyphNames) or categoryKey or ''
+			cleanText = ' '.join(glyphNames) or ' '.join(masterTokens) or categoryKey or ''
 		self.todoItems.insert(0, {
 			'task': cleanText,
 			'done': False,
 			'glyphs': glyphNames,
 			'glyph': glyphNames[0] if glyphNames else '',
 			'category': categoryKey,
+			'masters': masterTokens,
 		})
 		self.paletteWindow.group.newTaskField.set('')
 		self._hideSuggestions()
@@ -546,11 +548,15 @@ class GlyphsToDoPlugin(PalettePlugin):
 				done = bool(entry.get('done', False))
 				glyphName = entry.get('glyph', '')
 				glyphList = []
+				masterList = []
 				storedGlyphs = entry.get('glyphs')
 				if isinstance(storedGlyphs, list):
 					glyphList = [name for name in storedGlyphs if isinstance(name, str)]
 				elif glyphName:
 					glyphList = [glyphName]
+				storedMasters = entry.get('masters')
+				if isinstance(storedMasters, list):
+					masterList = [name for name in storedMasters if isinstance(name, str)]
 				category = self._normalizeCategory(entry.get('category'))
 			else:
 				task = entry
@@ -558,6 +564,7 @@ class GlyphsToDoPlugin(PalettePlugin):
 				glyphName = ''
 				glyphList = []
 				category = self._categoryKeyFromIndex(0)
+				masterList = []
 
 			if task:
 				normalized.append({
@@ -566,6 +573,7 @@ class GlyphsToDoPlugin(PalettePlugin):
 					'glyph': glyphList[0] if glyphList else glyphName,
 					'glyphs': glyphList,
 					'category': category,
+					'masters': masterList,
 				})
 		return normalized
 
@@ -620,12 +628,20 @@ class GlyphsToDoPlugin(PalettePlugin):
 				[master.name for master in getattr(font, 'masters', []) if getattr(master, 'name', None)],
 				key=lambda n: n.lower(),
 			)
+			self._masterLookup = {}
+			for name in self._masterNames:
+				lower = name.lower()
+				self._masterLookup[lower] = name
+				normalized = self._normalizedIdentifier(name)
+				if normalized and normalized not in self._masterLookup:
+					self._masterLookup[normalized] = name
 			self._log('_updateFontCaches glyphs=%d masters=%d' % (len(self._glyphNames), len(self._masterNames)))
 		else:
 			self._glyphNames = []
 			self._glyphLookup = {}
 			self._glyphNameSet = set()
 			self._masterNames = []
+			self._masterLookup = {}
 			self._log('_updateFontCaches cleared caches')
 
 	@objc.python_method
@@ -795,6 +811,18 @@ class GlyphsToDoPlugin(PalettePlugin):
 		if not text:
 			return ''
 		return ''.join(ch for ch in text.lower() if ch.isalnum())
+
+	@objc.python_method
+	def _canonicalMasterName(self, token):
+		if not token:
+			return ''
+		lookup = getattr(self, '_masterLookup', {}) or {}
+		lower = token.lower()
+		name = lookup.get(lower)
+		if name:
+			return name
+		normalized = self._normalizedIdentifier(lower)
+		return lookup.get(normalized, '')
 
 	@objc.python_method
 	def _showSuggestions(self, suggestions):
@@ -1127,6 +1155,7 @@ class GlyphsToDoPlugin(PalettePlugin):
 		cleanWords = []
 		glyphTokens = []
 		categoryKey = None
+		masterTokens = []
 		for word in words:
 			if word.startswith('/') and len(word) > 1:
 				token = word[1:]
@@ -1134,12 +1163,16 @@ class GlyphsToDoPlugin(PalettePlugin):
 				if categoryKey is None and lower in self._categoryLookup:
 					categoryKey = self._categoryLookup[lower]
 				elif lower not in self._categoryLookup:
-					glyphTokens.append(token)
+					masterName = self._canonicalMasterName(token)
+					if masterName:
+						masterTokens.append(masterName)
+					else:
+						glyphTokens.append(token)
 				cleanWords.append(token)
 			else:
 				cleanWords.append(word)
 		cleanText = ' '.join(filter(None, cleanWords)).strip()
-		return cleanText, glyphTokens, categoryKey
+		return cleanText, glyphTokens, categoryKey, masterTokens
 
 	@objc.python_method
 	def _normalizeGlyphList(self, names):
@@ -1385,12 +1418,36 @@ class GlyphsToDoPlugin(PalettePlugin):
 		return normalized
 
 	@objc.python_method
+	def _mastersForTask(self, task):
+		masters = []
+		if isinstance(task.get('masters'), list):
+			masters = [name for name in task.get('masters') if isinstance(name, str)]
+		if not masters:
+			return []
+		normalized = []
+		seen = set()
+		for name in masters:
+			if not name:
+				continue
+			canonical = self._canonicalMasterName(name) or name
+			key = canonical.lower()
+			if key in seen:
+				continue
+			seen.add(key)
+			normalized.append(canonical)
+		return normalized
+
+	@objc.python_method
 	def _openGlyph(self, index):
 		font = self._currentFont()
 		if font is None:
 			return
 		task = self.todoItems[index]
 		glyphNames = self._glyphsForTask(task)
+		masterNames = self._mastersForTask(task)
+		if not glyphNames and masterNames:
+			self._openMasterGlyphSet(font, masterNames)
+			return
 		if not glyphNames:
 			return
 		layersToOpen = []
@@ -1402,19 +1459,104 @@ class GlyphsToDoPlugin(PalettePlugin):
 			if layer is not None:
 				layersToOpen.append(layer)
 		if not layersToOpen:
+			if masterNames:
+				self._openMasterGlyphSet(font, masterNames)
+			return
+		self._openLayers(font, layersToOpen)
+
+	@objc.python_method
+	def _openMasterGlyphSet(self, font, masterNames):
+		if not masterNames:
+			return
+		orderedGlyphs = self._orderedGlyphs(font)
+		if not orderedGlyphs:
+			return
+		for masterName in masterNames:
+			master = self._masterByName(font, masterName)
+			if master is None:
+				continue
+			layers = []
+			for glyph in orderedGlyphs:
+				layer = None
+				try:
+					if master.id in glyph.layers:
+						layer = glyph.layers[master.id]
+				except Exception:
+					layer = None
+				if layer is None:
+					try:
+						if glyph.layers:
+							layer = glyph.layers[0]
+					except Exception:
+						layer = None
+				if layer:
+					layers.append(layer)
+			if layers:
+				self._openLayers(font, layers)
+
+	@objc.python_method
+	def _orderedGlyphs(self, font):
+		try:
+			glyphs = list(font.glyphs)
+		except Exception:
+			return []
+		try:
+			glyphs.sort(key=self._glyphSortKey)
+		except Exception:
+			pass
+		return glyphs
+
+	@objc.python_method
+	def _glyphSortKey(self, glyph):
+		if glyph is None:
+			return ''
+		sortName = ''
+		try:
+			sortName = glyph.sortName()
+		except TypeError:
+			sortName = getattr(glyph, 'sortName', None)
+			if callable(sortName):
+				try:
+					sortName = sortName()
+				except Exception:
+					sortName = ''
+		except Exception:
+			sortName = ''
+		if not sortName:
+			sortName = getattr(glyph, 'name', '') or ''
+		return sortName.lower()
+
+	@objc.python_method
+	def _masterByName(self, font, name):
+		if not font or not name:
+			return None
+		targetLower = name.lower()
+		for master in getattr(font, 'masters', []):
+			masterName = getattr(master, 'name', None)
+			if masterName and masterName.lower() == targetLower:
+				return master
+		return None
+
+	@objc.python_method
+	def _openLayers(self, font, layers):
+		if not layers:
 			return
 		document = getattr(font, 'parent', None)
 		if document:
 			try:
 				windowController = document.windowController()
 				if windowController:
-					windowController.addTabWithLayers_(layersToOpen)
+					windowController.addTabWithLayers_(layers)
 					return
 			except Exception:
 				pass
 		try:
-			font.newTab(layersToOpen)
+			font.newTab(layers)
 		except Exception:
+			try:
+				glyphNames = [layer.parent.name for layer in layers if getattr(layer, 'parent', None)]
+			except Exception:
+				glyphNames = []
 			self.logToConsole("Glyphs-ToDo: unable to open glyphs '%s'" % ', '.join(glyphNames))
 
 	@objc.python_method

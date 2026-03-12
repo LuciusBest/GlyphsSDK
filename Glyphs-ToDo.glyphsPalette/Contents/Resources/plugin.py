@@ -5,6 +5,7 @@ import json
 import math
 import objc
 from AppKit import (
+	NSImage,
 	NSImageNameFollowLinkFreestandingTemplate,
 	NSImageNameRefreshTemplate,
 	NSImageNameStatusAvailable,
@@ -78,6 +79,10 @@ class GlyphsToDoPlugin(PalettePlugin):
 
 		self.categoryStrings = [Glyphs.localize(names) for names in self.categoryOptions]
 		self.categoryKeys = [entry['en'] for entry in self.categoryOptions]
+		self.openIcon = self._symbolImage('pencil') or NSImage.imageNamed_(NSImageNameFollowLinkFreestandingTemplate)
+		self.doneIcon = self._symbolImage('checkmark.circle') or NSImage.imageNamed_(NSImageNameStatusAvailable)
+		self.deleteIcon = self._symbolImage('trash') or NSImage.imageNamed_(NSImageNameTrashEmpty)
+		self.undoIcon = self._symbolImage('arrow.uturn.left') or NSImage.imageNamed_(NSImageNameRefreshTemplate)
 
 		self.paletteWindow.group.categoryLabel = TextBox((120, 52, -10, 14), Glyphs.localize({'en': 'Category', 'fr': 'Categorie'}), sizeStyle='small')
 		self.paletteWindow.group.categoryPopUp = PopUpButton((120, 64, -10, 22), self.categoryStrings, sizeStyle='small')
@@ -301,16 +306,16 @@ class GlyphsToDoPlugin(PalettePlugin):
 		glyphTitle = Glyphs.localize({'en': 'Glyph', 'fr': 'Glyphe'})
 		categoryTitle = Glyphs.localize({'en': 'Category', 'fr': 'Categorie'})
 		openCell = SegmentedButtonListCell([{
-			'imageNamed': NSImageNameFollowLinkFreestandingTemplate,
+			'imageObject': self.openIcon,
 			'toolTip': Glyphs.localize({'en': 'Open glyph', 'fr': 'Ouvrir le glyphe'}),
 		}])
 		statusCell = SegmentedButtonListCell([
 			{
-				'imageNamed': NSImageNameStatusAvailable,
+				'imageObject': self.doneIcon,
 				'toolTip': Glyphs.localize({'en': 'Mark as done', 'fr': 'Marquer comme fait'}),
 			},
 			{
-				'imageNamed': NSImageNameTrashEmpty,
+				'imageObject': self.deleteIcon,
 				'toolTip': Glyphs.localize({'en': 'Delete task', 'fr': 'Supprimer la tache'}),
 			},
 		])
@@ -331,16 +336,16 @@ class GlyphsToDoPlugin(PalettePlugin):
 		glyphTitle = Glyphs.localize({'en': 'Glyph', 'fr': 'Glyphe'})
 		categoryTitle = Glyphs.localize({'en': 'Category', 'fr': 'Categorie'})
 		openCell = SegmentedButtonListCell([{
-			'imageNamed': NSImageNameFollowLinkFreestandingTemplate,
+			'imageObject': self.openIcon,
 			'toolTip': Glyphs.localize({'en': 'Open glyph', 'fr': 'Ouvrir le glyphe'}),
 		}])
 		doneCell = SegmentedButtonListCell([
 			{
-				'imageNamed': NSImageNameRefreshTemplate,
+				'imageObject': self.undoIcon,
 				'toolTip': Glyphs.localize({'en': 'Move back to todo', 'fr': 'Replacer dans TODO'}),
 			},
 			{
-				'imageNamed': NSImageNameTrashEmpty,
+				'imageObject': self.deleteIcon,
 				'toolTip': Glyphs.localize({'en': 'Delete task', 'fr': 'Supprimer la tache'}),
 			},
 		])
@@ -572,6 +577,20 @@ class GlyphsToDoPlugin(PalettePlugin):
 				listView.set(items)
 		except Exception:
 			pass
+
+	@objc.python_method
+	def _symbolImage(self, symbolName):
+		try:
+			image = NSImage.imageWithSystemSymbolName_accessibilityDescription_(symbolName, None)
+			if image:
+				image.setTemplate_(True)
+				return image
+		except Exception:
+			pass
+		image = NSImage.imageNamed_(symbolName)
+		if image:
+			image.setTemplate_(True)
+		return image
 
 	@objc.python_method
 	def _heightForText(self, text, width):

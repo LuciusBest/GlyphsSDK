@@ -4,14 +4,39 @@ from __future__ import division, print_function, unicode_literals
 import json
 import math
 import objc
-from Foundation import NSObject
+from Foundation import NSObject, NSNotificationCenter
 from AppKit import (
+	NSAttributedString,
+	NSBezierPath,
+	NSButton,
+	NSColor,
+	NSFontAttributeName,
+	NSMutableParagraphStyle,
+	NSFont,
+	NSForegroundColorAttributeName,
 	NSImage,
 	NSImageNameFollowLinkFreestandingTemplate,
 	NSImageNameRefreshTemplate,
 	NSImageNameStatusAvailable,
 	NSImageNameTrashEmpty,
+	NSInsetRect,
+	NSLineBreakByTruncatingTail,
 	NSLineBreakByWordWrapping,
+	NSMakeRect,
+	NSTableView,
+	NSTableViewNoColumnAutoresizing,
+	NSTableColumnUserResizingMask,
+	NSTextAlignmentCenter,
+	NSParagraphStyleAttributeName,
+	NSTextFieldCell,
+	NSTrackingActiveAlways,
+	NSTrackingArea,
+	NSTrackingInVisibleRect,
+	NSTrackingMouseEnteredAndExited,
+	NSTrackingMouseMoved,
+	NSView,
+	NSViewBoundsDidChangeNotification,
+	NSButtonTypeMomentaryChange,
 )
 from GlyphsApp import Glyphs, UPDATEINTERFACE
 from GlyphsApp.plugins import PalettePlugin
@@ -60,6 +85,197 @@ class TaskFieldDelegate(NSObject):
 		return self.controller
 
 
+class CategoryBadgeCell(NSTextFieldCell):
+	badgeColor = NSColor.colorWithCalibratedRed_green_blue_alpha_(0.36, 0.33, 0.86, 1.0)
+	textColor = NSColor.whiteColor()
+	paddingX = 10
+	paddingY = 5
+	radius = 8
+
+	def drawWithFrame_inView_(self, frame, view):
+		value = self.stringValue()
+		if not value:
+			return
+		rect = NSInsetRect(frame, 6, 6)
+		if rect.size.width <= 0 or rect.size.height <= 0:
+			return
+		path = NSBezierPath.bezierPathWithRoundedRect_xRadius_yRadius_(rect, self.radius, self.radius)
+		self.badgeColor.set()
+		path.fill()
+		paragraph = NSMutableParagraphStyle.alloc().init()
+		paragraph.setAlignment_(NSTextAlignmentCenter)
+		attributes = {
+			NSFontAttributeName: self.font() or NSFont.systemFontOfSize_(11),
+			NSForegroundColorAttributeName: self.textColor,
+			NSParagraphStyleAttributeName: paragraph,
+		}
+		attrString = NSAttributedString.alloc().initWithString_attributes_(value, attributes)
+		attrString.drawInRect_(rect)
+
+
+class GlyphBadgeCell(NSTextFieldCell):
+	badgeColor = NSColor.colorWithCalibratedRed_green_blue_alpha_(0.22, 0.63, 0.32, 1.0)
+	textColor = NSColor.whiteColor()
+	paddingX = 6
+	paddingY = 4
+	radius = 6
+	gap = 4
+
+	def drawWithFrame_inView_(self, frame, view):
+		value = self.objectValue()
+		if not value:
+			return
+		if isinstance(value, str):
+			tokens = [token for token in value.split() if token]
+		else:
+			tokens = [token for token in value if token]
+		if not tokens:
+			return
+		x = frame.origin.x + 4
+		centerY = frame.origin.y + (frame.size.height / 2.0)
+		font = self.font() or NSFont.systemFontOfSize_(11)
+		for token in tokens:
+			attr = NSAttributedString.alloc().initWithString_attributes_(token, {
+				NSFontAttributeName: font,
+				NSForegroundColorAttributeName: self.textColor,
+			})
+			size = attr.size()
+			width = size.width + self.paddingX * 2
+			height = size.height + self.paddingY * 2
+			rect = NSMakeRect(x, centerY - height / 2.0, width, height)
+			path = NSBezierPath.bezierPathWithRoundedRect_xRadius_yRadius_(rect, self.radius, self.radius)
+			self.badgeColor.set()
+			path.fill()
+			textRect = NSInsetRect(rect, self.paddingX, self.paddingY / 2.0)
+			attr.drawInRect_(textRect)
+			x += width + self.gap
+
+
+class HoverActionPanel(NSView):
+	def initWithController_(self, controller):
+		self = objc.super(HoverActionPanel, self).initWithFrame_(NSMakeRect(0, 0, 110, 28))
+		if self is None:
+			return None
+		self.controller = controller
+		self.currentRow = -1
+		self.setOpaque_(False)
+		self.openButton = self._createButton('openClicked:')
+		self.doneButton = self._createButton('doneClicked:')
+		self.deleteButton = self._createButton('deleteClicked:')
+		self.buttons = [self.openButton, self.doneButton, self.deleteButton]
+		for button in self.buttons:
+			self.addSubview_(button)
+		return self
+
+	def _createButton(self, actionName):
+		button = NSButton.alloc().initWithFrame_(NSMakeRect(0, 0, 24, 24))
+		button.setBordered_(False)
+		button.setButtonType_(NSButtonTypeMomentaryChange)
+		button.setTarget_(self)
+		button.setAction_(getattr(self, actionName))
+		return button
+
+	def setButtonImages(self, openImage, doneImage, deleteImage):
+		if openImage:
+			self.openButton.setImage_(openImage)
+		if doneImage:
+			self.doneButton.setImage_(doneImage)
+		if deleteImage:
+			self.deleteButton.setImage_(deleteImage)
+
+	def drawRect_(self, rect):
+		path = NSBezierPath.bezierPathWithRoundedRect_xRadius_yRadius_(self.bounds(), 8, 8)
+		NSColor.colorWithCalibratedWhite_alpha_(0.1, 0.85).set()
+		path.fill()
+
+	def setFrame_(self, frame):
+		objc.super(HoverActionPanel, self).setFrame_(frame)
+		self._layoutButtons()
+
+	def _layoutButtons(self):
+		width = self.bounds().size.width
+		height = self.bounds().size.height
+		buttonWidth = 22
+		gap = 6
+		totalWidth = len(self.buttons) * buttonWidth + (len(self.buttons) - 1) * gap
+		startX = max(4, (width - totalWidth) / 2.0)
+		for button in self.buttons:
+			button.setFrame_(NSMakeRect(startX, (height - 20) / 2.0, buttonWidth, 20))
+			startX += buttonWidth + gap
+
+	def presentInTable_atRow_(self, tableView, row):
+		rowRect = tableView.rectOfRow_(row)
+		if rowRect.size.height <= 0:
+			self.setHidden_(True)
+			return
+		visible = tableView.visibleRect()
+		height = min(28, rowRect.size.height - 6)
+		width = max(96, len(self.buttons) * 24 + 12)
+		rightEdge = visible.origin.x + visible.size.width
+		x = rightEdge - width - 8
+		y = rowRect.origin.y + (rowRect.size.height - height) / 2.0
+		self.currentRow = row
+		self.setFrame_(NSMakeRect(x, y, width, height))
+		self.setHidden_(False)
+
+	def openClicked_(self, sender):
+		self.controller._handleHoverAction('open', self.currentRow)
+
+	def doneClicked_(self, sender):
+		self.controller._handleHoverAction('done', self.currentRow)
+
+	def deleteClicked_(self, sender):
+		self.controller._handleHoverAction('delete', self.currentRow)
+
+
+class TableHoverTracker(NSObject):
+	def initWithController_tableView_(self, controller, tableView):
+		self = objc.super(TableHoverTracker, self).init()
+		if self is None:
+			return None
+		self.controller = controller
+		self.tableView = tableView
+		options = NSTrackingActiveAlways | NSTrackingInVisibleRect | NSTrackingMouseMoved | NSTrackingMouseEnteredAndExited
+		self.trackingArea = NSTrackingArea.alloc().initWithRect_options_owner_userInfo_(tableView.bounds(), options, self, None)
+		tableView.addTrackingArea_(self.trackingArea)
+		if tableView.window():
+			tableView.window().setAcceptsMouseMovedEvents_(True)
+		scrollView = tableView.enclosingScrollView()
+		self.contentView = scrollView.contentView() if scrollView else None
+		if self.contentView:
+			self.contentView.setPostsBoundsChangedNotifications_(True)
+			NSNotificationCenter.defaultCenter().addObserver_selector_name_object_(
+				self,
+				"contentViewDidScroll:",
+				NSViewBoundsDidChangeNotification,
+				self.contentView,
+			)
+		return self
+
+	def mouseMoved_(self, event):
+		point = self.tableView.convertPoint_fromView_(event.locationInWindow(), None)
+		row = self.tableView.rowAtPoint_(point)
+		self.controller._updateHoverRow(row)
+
+	def mouseExited_(self, event):
+		self.controller._updateHoverRow(-1)
+
+	def contentViewDidScroll_(self, notification):
+		self.controller._updateHoverRow(-1)
+
+	def dealloc(self):
+		try:
+			if self.tableView and self.trackingArea:
+				self.tableView.removeTrackingArea_(self.trackingArea)
+		except Exception:
+			pass
+		try:
+			NSNotificationCenter.defaultCenter().removeObserver_(self)
+		except Exception:
+			pass
+		objc.super(TableHoverTracker, self).dealloc()
+
+
 class GlyphsToDoPlugin(PalettePlugin):
 	defaultsKey = "com.paulpaturel.GlyphsToDo.items"
 	categoryOptions = [
@@ -92,6 +308,8 @@ class GlyphsToDoPlugin(PalettePlugin):
 		self._glyphNames = []
 		self._glyphLookup = {}
 		self._glyphNameSet = set()
+		self._hoverPanel = None
+		self._hoverTracker = None
 
 		width, height = 260, 360
 		self.paletteWindow = Window((width, height))
@@ -140,12 +358,12 @@ class GlyphsToDoPlugin(PalettePlugin):
 			(10, 128, -10, 150),
 			[],
 			columnDescriptions=activeColumns,
-			showColumnTitles=False,
+			showColumnTitles=True,
 			enableDelete=False,
 			allowsMultipleSelection=False,
 			drawFocusRing=False,
-			rowHeight=56,
-			editCallback=self._handleActiveEdit,
+			rowHeight=40,
+			doubleClickCallback=self._handleActiveDoubleClick,
 		)
 
 		self.paletteWindow.group.doneToggle = Button(
@@ -164,12 +382,13 @@ class GlyphsToDoPlugin(PalettePlugin):
 			enableDelete=False,
 			allowsMultipleSelection=False,
 			drawFocusRing=False,
-			rowHeight=48,
-			editCallback=self._handleDoneEdit,
+			rowHeight=28,
+			doubleClickCallback=self._handleDoneDoubleClick,
 		)
 		self.paletteWindow.group.doneList.show(False)
 
 		self.dialog = self.paletteWindow.group.getNSView()
+		self._configureTaskTables()
 		self._syncFromFont()
 
 	@objc.python_method
@@ -237,42 +456,32 @@ class GlyphsToDoPlugin(PalettePlugin):
 		self.paletteWindow.group.doneList.set(doneItems)
 		self._updateRowHeights()
 		self.paletteWindow.group.doneToggle.setTitle(self._doneToggleTitle(len(doneItems)))
+		self._hideHoverActions()
 
 	@objc.python_method
 	def _baseDisplayItem(self, item):
 		return {
 			'task': item.get('task', ''),
-			'glyph': self._glyphDisplay(item),
-			'category': self._categoryLabelFromKey(item.get('category')),
+			'categoryLabel': self._categoryLabelFromKey(item.get('category')),
+			'glyphTokens': self._glyphTokenList(item),
 		}
 
 	@objc.python_method
-	def _glyphDisplay(self, item):
+	def _glyphTokenList(self, item):
 		glyphs = item.get('glyphs')
 		if not glyphs and item.get('glyph'):
 			glyphs = [item.get('glyph')]
 		if not glyphs:
-			return ''
-		resolved = [self._resolveGlyphName(name) for name in glyphs]
-		return ', '.join(resolved)
+			return []
+		return [self._resolveGlyphName(name) for name in glyphs]
 
 	@objc.python_method
 	def _activeDisplayItem(self, item):
-		data = self._baseDisplayItem(item)
-		data.update({
-			'openAction': -1,
-			'statusAction': -1,
-		})
-		return data
+		return self._baseDisplayItem(item)
 
 	@objc.python_method
 	def _doneDisplayItem(self, item):
-		data = self._baseDisplayItem(item)
-		data.update({
-			'openAction': -1,
-			'doneActions': -1,
-		})
-		return data
+		return self._baseDisplayItem(item)
 
 	@objc.python_method
 	def _saveTasks(self, font):
@@ -349,6 +558,7 @@ class GlyphsToDoPlugin(PalettePlugin):
 				self._activeFont = None
 				self.todoItems = []
 				self._refreshList()
+				self._hideHoverActions()
 			return
 
 		if font is self._activeFont:
@@ -683,63 +893,104 @@ class GlyphsToDoPlugin(PalettePlugin):
 
 	@objc.python_method
 	def _buildActiveColumns(self):
-		taskTitle = Glyphs.localize({'en': 'Task', 'fr': 'Tache'})
 		glyphTitle = Glyphs.localize({'en': 'Glyph', 'fr': 'Glyphe'})
 		categoryTitle = Glyphs.localize({'en': 'Category', 'fr': 'Categorie'})
-		openCell = SegmentedButtonListCell([{
-			'imageObject': self.openIcon,
-			'toolTip': Glyphs.localize({'en': 'Open glyph', 'fr': 'Ouvrir le glyphe'}),
-		}])
-		statusCell = SegmentedButtonListCell([
-			{
-				'imageObject': self.doneIcon,
-				'toolTip': Glyphs.localize({'en': 'Mark as done', 'fr': 'Marquer comme fait'}),
-			},
-			{
-				'imageObject': self.deleteIcon,
-				'toolTip': Glyphs.localize({'en': 'Delete task', 'fr': 'Supprimer la tache'}),
-			},
-		])
-
+		taskTitle = Glyphs.localize({'en': 'Task Name', 'fr': 'Intitule'})
+		if not hasattr(self, '_categoryBadgeCell'):
+			self._categoryBadgeCell = CategoryBadgeCell.alloc().init()
+		if not hasattr(self, '_glyphBadgeCell'):
+			self._glyphBadgeCell = GlyphBadgeCell.alloc().init()
 		columns = [
-			{'title': taskTitle, 'key': 'task', 'editable': False, 'width': 150, 'lineBreakMode': NSLineBreakByWordWrapping},
-			{'title': glyphTitle, 'key': 'glyph', 'editable': False, 'width': 70},
-			{'title': categoryTitle, 'key': 'category', 'editable': False, 'width': 90},
-			{'title': '', 'key': 'openAction', 'editable': True, 'width': 40, 'binding': 'selectedIndex', 'cell': openCell},
-			{'title': '', 'key': 'statusAction', 'editable': True, 'width': 80, 'binding': 'selectedIndex', 'cell': statusCell},
+			{'title': categoryTitle, 'key': 'categoryLabel', 'editable': False, 'width': 110, 'cell': self._categoryBadgeCell},
+			{'title': glyphTitle, 'key': 'glyphTokens', 'editable': False, 'width': 150, 'cell': self._glyphBadgeCell},
+			{'title': taskTitle, 'key': 'task', 'editable': False, 'width': 240, 'lineBreakMode': NSLineBreakByTruncatingTail},
 		]
-		self._activeColumnKeys = [col['key'] for col in columns]
 		return columns
 
 	@objc.python_method
 	def _buildDoneColumns(self):
-		taskTitle = Glyphs.localize({'en': 'Task', 'fr': 'Tache'})
-		glyphTitle = Glyphs.localize({'en': 'Glyph', 'fr': 'Glyphe'})
-		categoryTitle = Glyphs.localize({'en': 'Category', 'fr': 'Categorie'})
-		openCell = SegmentedButtonListCell([{
-			'imageObject': self.openIcon,
-			'toolTip': Glyphs.localize({'en': 'Open glyph', 'fr': 'Ouvrir le glyphe'}),
-		}])
-		doneCell = SegmentedButtonListCell([
-			{
-				'imageObject': self.undoIcon,
-				'toolTip': Glyphs.localize({'en': 'Move back to todo', 'fr': 'Replacer dans TODO'}),
-			},
-			{
-				'imageObject': self.deleteIcon,
-				'toolTip': Glyphs.localize({'en': 'Delete task', 'fr': 'Supprimer la tache'}),
-			},
-		])
-
+		taskTitle = Glyphs.localize({'en': 'Completed Task', 'fr': 'Tache terminee'})
 		columns = [
-			{'title': taskTitle, 'key': 'task', 'editable': False, 'width': 150, 'lineBreakMode': NSLineBreakByWordWrapping},
-			{'title': glyphTitle, 'key': 'glyph', 'editable': False, 'width': 70},
-			{'title': categoryTitle, 'key': 'category', 'editable': False, 'width': 90},
-			{'title': '', 'key': 'openAction', 'editable': True, 'width': 40, 'binding': 'selectedIndex', 'cell': openCell},
-			{'title': '', 'key': 'doneActions', 'editable': True, 'width': 80, 'binding': 'selectedIndex', 'cell': doneCell},
+			{'title': taskTitle, 'key': 'task', 'editable': False, 'width': 320, 'lineBreakMode': NSLineBreakByTruncatingTail},
 		]
-		self._doneColumnKeys = [col['key'] for col in columns]
 		return columns
+
+	@objc.python_method
+	def _configureTaskTables(self):
+		self._styleListView(self.paletteWindow.group.todoList, 36, True)
+		self._styleListView(self.paletteWindow.group.doneList, 26, False)
+		self._installHoverUI()
+
+	@objc.python_method
+	def _styleListView(self, listView, rowHeight, horizontalScroll):
+		try:
+			tableView = listView._tableView
+			scrollView = listView._scrollView
+		except Exception:
+			return
+		tableView.setAllowsColumnReordering_(False)
+		tableView.setAllowsColumnSelection_(False)
+		tableView.setAllowsMultipleSelection_(False)
+		tableView.setRowHeight_(rowHeight)
+		try:
+			for column in tableView.tableColumns():
+				column.setResizingMask_(NSTableColumnUserResizingMask)
+		except Exception:
+			pass
+		if horizontalScroll:
+			try:
+				tableView.setColumnAutoresizingStyle_(NSTableViewNoColumnAutoresizing)
+			except Exception:
+				pass
+			if scrollView:
+				scrollView.setHasHorizontalScroller_(True)
+		self._installHoverUI()
+
+	@objc.python_method
+	def _installHoverUI(self):
+		if self._hoverPanel:
+			return
+		try:
+			tableView = self.paletteWindow.group.todoList._tableView
+		except Exception:
+			return
+		self._hoverPanel = HoverActionPanel.alloc().initWithController_(self)
+		self._hoverPanel.setButtonImages(self.openIcon, self.doneIcon, self.deleteIcon)
+		self._hoverPanel.setHidden_(True)
+		tableView.addSubview_(self._hoverPanel)
+		self._hoverTracker = TableHoverTracker.alloc().initWithController_tableView_(self, tableView)
+
+	@objc.python_method
+	def _updateHoverRow(self, row):
+		if row is None or row < 0:
+			self._hideHoverActions()
+			return
+		if not self._hoverPanel:
+			return
+		try:
+			tableView = self.paletteWindow.group.todoList._tableView
+		except Exception:
+			return
+		self._hoverPanel.presentInTable_atRow_(tableView, row)
+
+	@objc.python_method
+	def _hideHoverActions(self):
+		if self._hoverPanel:
+			self._hoverPanel.setHidden_(True)
+			self._hoverPanel.currentRow = -1
+
+	@objc.python_method
+	def _handleHoverAction(self, action, row):
+		index = self._indexFromActiveRow(row)
+		if index is None:
+			return
+		if action == 'open':
+			self._openGlyph(index)
+		elif action == 'done':
+			self._markDone(index, True)
+		elif action == 'delete':
+			self._deleteTask(index)
+		self._hideHoverActions()
 
 	@objc.python_method
 	def _categoryKeyFromIndex(self, index):
@@ -782,46 +1033,24 @@ class GlyphsToDoPlugin(PalettePlugin):
 		self._refreshList()
 
 	@objc.python_method
-	def _handleActiveEdit(self, sender):
-		columnIndex, rowIndex = self._clickedCellPosition(sender)
-		if columnIndex is None or rowIndex is None:
+	def _handleActiveDoubleClick(self, sender):
+		selection = sender.getSelection()
+		if not selection:
 			return
-		if columnIndex >= len(self._activeColumnKeys):
+		index = self._indexFromActiveRow(selection[0])
+		if index is None:
 			return
-		targetIndex = self._indexFromActiveRow(rowIndex)
-		if targetIndex is None:
-			return
-		columnKey = self._activeColumnKeys[columnIndex]
-		value = sender.get()[rowIndex].get(columnKey)
-		if columnKey == 'openAction' and value == 0:
-			self._openGlyph(targetIndex)
-			self._clearActionValue(sender, rowIndex, columnKey)
-		elif columnKey == 'statusAction':
-			if value == 0:
-				self._markDone(targetIndex, True)
-			elif value == 1:
-				self._deleteTask(targetIndex)
+		self._openGlyph(index)
 
 	@objc.python_method
-	def _handleDoneEdit(self, sender):
-		columnIndex, rowIndex = self._clickedCellPosition(sender)
-		if columnIndex is None or rowIndex is None:
+	def _handleDoneDoubleClick(self, sender):
+		selection = sender.getSelection()
+		if not selection:
 			return
-		if columnIndex >= len(self._doneColumnKeys):
+		index = self._indexFromDoneRow(selection[0])
+		if index is None:
 			return
-		targetIndex = self._indexFromDoneRow(rowIndex)
-		if targetIndex is None:
-			return
-		columnKey = self._doneColumnKeys[columnIndex]
-		value = sender.get()[rowIndex].get(columnKey)
-		if columnKey == 'openAction' and value == 0:
-			self._openGlyph(targetIndex)
-			self._clearActionValue(sender, rowIndex, columnKey)
-		elif columnKey == 'doneActions':
-			if value == 0:
-				self._markDone(targetIndex, False)
-			elif value == 1:
-				self._deleteTask(targetIndex)
+		self._openGlyph(index)
 
 	@objc.python_method
 	def _indexFromActiveRow(self, row):
@@ -834,24 +1063,6 @@ class GlyphsToDoPlugin(PalettePlugin):
 		if 0 <= row < len(self._doneIndexMap):
 			return self._doneIndexMap[row]
 		return None
-
-	@objc.python_method
-	def _clickedCellPosition(self, listView):
-		columnIndex = rowIndex = None
-		try:
-			tableView = listView._tableView
-			columnIndex = tableView.clickedColumn()
-			rowIndex = tableView.clickedRow()
-		except Exception:
-			pass
-		editedColumn, editedRow = listView.getEditedColumnAndRow()
-		if (columnIndex is None or columnIndex < 0) and editedColumn is not None and editedColumn >= 0:
-			columnIndex = editedColumn
-		if (rowIndex is None or rowIndex < 0) and editedRow is not None and editedRow >= 0:
-			rowIndex = editedRow
-		if columnIndex is None or rowIndex is None or columnIndex < 0 or rowIndex < 0:
-			return None, None
-		return columnIndex, rowIndex
 
 	@objc.python_method
 	def _openGlyphForRow(self, sender, row):
@@ -966,14 +1177,8 @@ class GlyphsToDoPlugin(PalettePlugin):
 
 	@objc.python_method
 	def _updateRowHeights(self):
-		activeHeights = [self._heightForText(item['task'], 150) for item in self.paletteWindow.group.todoList.get()]
-		doneHeights = [self._heightForText(item['task'], 150) for item in self.paletteWindow.group.doneList.get()]
-		if activeHeights:
-			height = max(50, min(120, max(activeHeights)))
-			self._setListRowHeight(self.paletteWindow.group.todoList, height)
-		if doneHeights:
-			height = max(40, min(120, max(doneHeights)))
-			self._setListRowHeight(self.paletteWindow.group.doneList, height)
+		self._setListRowHeight(self.paletteWindow.group.todoList, 36)
+		self._setListRowHeight(self.paletteWindow.group.doneList, 26)
 
 	@objc.python_method
 	def _setListRowHeight(self, listView, height):

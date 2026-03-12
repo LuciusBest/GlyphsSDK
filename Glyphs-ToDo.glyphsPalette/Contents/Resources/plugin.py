@@ -336,13 +336,6 @@ class GlyphsToDoPlugin(PalettePlugin):
 			callback=self.addTask,
 			sizeStyle='small',
 		)
-		self.paletteWindow.group.glyphLabel = TextBox((10, 52, 90, 14), Glyphs.localize({'en': 'Glyph', 'fr': 'Glyphe'}), sizeStyle='small')
-		self.paletteWindow.group.glyphField = EditText(
-			(10, 64, 100, 22),
-			placeholder=Glyphs.localize({'en': 'Name', 'fr': 'Nom'}),
-			sizeStyle='small',
-		)
-
 		self.categoryStrings = [Glyphs.localize(names) for names in self.categoryOptions]
 		self.categoryKeys = [entry['en'] for entry in self.categoryOptions]
 		self._categoryLookup = self._buildCategoryLookup()
@@ -351,15 +344,12 @@ class GlyphsToDoPlugin(PalettePlugin):
 		self.deleteIcon = self._symbolImage('trash') or NSImage.imageNamed_(NSImageNameTrashEmpty)
 		self.undoIcon = self._symbolImage('arrow.uturn.left') or NSImage.imageNamed_(NSImageNameRefreshTemplate)
 
-		self.paletteWindow.group.categoryLabel = TextBox((120, 52, -10, 14), Glyphs.localize({'en': 'Category', 'fr': 'Categorie'}), sizeStyle='small')
-		self.paletteWindow.group.categoryPopUp = PopUpButton((120, 64, -10, 22), self.categoryStrings, sizeStyle='small')
-
 		filterOptions = [Glyphs.localize({'en': 'All categories', 'fr': 'Toutes categories'})] + self.categoryStrings
-		self.paletteWindow.group.filterPopUp = PopUpButton((10, 96, -10, 22), filterOptions, sizeStyle='small', callback=self._filterChanged)
+		self.paletteWindow.group.filterPopUp = PopUpButton((10, 56, -10, 22), filterOptions, sizeStyle='small', callback=self._filterChanged)
 
 		activeColumns = self._buildActiveColumns()
 		self.paletteWindow.group.todoList = List(
-			(10, 128, -10, 150),
+			(10, 90, -10, 172),
 			[],
 			columnDescriptions=activeColumns,
 			showColumnTitles=True,
@@ -371,7 +361,7 @@ class GlyphsToDoPlugin(PalettePlugin):
 		)
 
 		self.paletteWindow.group.doneToggle = Button(
-			(10, 286, -10, 22),
+			(10, 270, -10, 22),
 			self._doneToggleTitle(0),
 			callback=self._toggleDoneVisibility,
 			sizeStyle='small',
@@ -379,7 +369,7 @@ class GlyphsToDoPlugin(PalettePlugin):
 
 		doneColumns = self._buildDoneColumns()
 		self.paletteWindow.group.doneList = List(
-			(10, 314, -10, 100),
+			(10, 298, -10, 100),
 			[],
 			columnDescriptions=doneColumns,
 			showColumnTitles=False,
@@ -416,13 +406,11 @@ class GlyphsToDoPlugin(PalettePlugin):
 		if not rawText:
 			return
 		cleanText, glyphTokens, categoryFromText = self._extractMetadataFromText(rawText)
-		glyphInput = (self.paletteWindow.group.glyphField.get() or '').strip()
-		manualGlyphs = self._parseGlyphInput(glyphInput)
-		glyphNames = self._normalizeGlyphList(glyphTokens + manualGlyphs)
+		glyphNames = self._normalizeGlyphList(glyphTokens)
 		glyphNames = [self._resolveGlyphName(name) for name in glyphNames]
 		categoryKey = categoryFromText
 		if not categoryKey:
-			categoryKey = self._categoryKeyFromIndex(self.paletteWindow.group.categoryPopUp.get())
+			categoryKey = self._categoryKeyFromIndex(0)
 
 		if not cleanText:
 			cleanText = ' '.join(glyphNames) or categoryKey or ''
@@ -434,7 +422,6 @@ class GlyphsToDoPlugin(PalettePlugin):
 			'category': categoryKey,
 		})
 		self.paletteWindow.group.newTaskField.set('')
-		self.paletteWindow.group.glyphField.set('')
 		self._hideSuggestions()
 		self._refreshList()
 		self._saveTasks(font)
@@ -798,10 +785,6 @@ class GlyphsToDoPlugin(PalettePlugin):
 				editor.setSelectedRange_((start + len(replacement), 0))
 			except Exception:
 				pass
-		if item['type'] == 'glyph':
-			self.paletteWindow.group.glyphField.set(item['value'])
-		elif item['type'] == 'category':
-			self._selectCategoryKey(item['value'])
 		self._taskFieldDidChange()
 		self._hideSuggestions()
 		return True
@@ -818,13 +801,6 @@ class GlyphsToDoPlugin(PalettePlugin):
 		if selection:
 			if self._applySuggestion(selection[0]):
 				self._hideSuggestions()
-
-	@objc.python_method
-	def _selectCategoryKey(self, key):
-		if key not in self.categoryKeys:
-			return
-		index = self.categoryKeys.index(key)
-		self.paletteWindow.group.categoryPopUp.set(index)
 
 	@objc.python_method
 	def _extractMetadataFromText(self, text):
@@ -845,21 +821,6 @@ class GlyphsToDoPlugin(PalettePlugin):
 				cleanWords.append(word)
 		cleanText = ' '.join(filter(None, cleanWords)).strip()
 		return cleanText, glyphTokens, categoryKey
-
-	@objc.python_method
-	def _parseGlyphInput(self, text):
-		if not text:
-			return []
-		normalized = []
-		for chunk in text.replace(',', ' ').split():
-			token = chunk.strip()
-			if not token:
-				continue
-			if token.startswith('/'):
-				token = token[1:]
-			if token:
-				normalized.append(token)
-		return normalized
 
 	@objc.python_method
 	def _normalizeGlyphList(self, names):

@@ -45,7 +45,6 @@ from vanilla import (
 	EditText,
 	Group,
 	List,
-	Popover,
 	PopUpButton,
 	SegmentedButtonListCell,
 	TextBox,
@@ -326,7 +325,6 @@ class GlyphsToDoPlugin(PalettePlugin):
 		self._activeFont = None
 		self._categoryFilter = None
 		self._doneExpanded = False
-		self._suggestionPopover = None
 		self._suggestionList = None
 		self._currentSuggestions = []
 		self._selectedSuggestionIndex = -1
@@ -402,6 +400,23 @@ class GlyphsToDoPlugin(PalettePlugin):
 			doubleClickCallback=self._handleDoneDoubleClick,
 		)
 		self.paletteWindow.group.doneList.show(False)
+
+		self.paletteWindow.group.suggestionList = List(
+			(10, 48, -10, 120),
+			[],
+			columnDescriptions=[
+				{'title': Glyphs.localize({'en': 'Suggestion', 'fr': 'Suggestion'}), 'key': 'label'},
+				{'title': Glyphs.localize({'en': 'Type', 'fr': 'Type'}), 'key': 'kind', 'width': 90},
+			],
+			showColumnTitles=False,
+			enableDelete=False,
+			allowsMultipleSelection=False,
+			rowHeight=20,
+			selectionCallback=self._suggestionSelectionChanged,
+			doubleClickCallback=self._suggestionDoubleClicked,
+		)
+		self.paletteWindow.group.suggestionList.show(False)
+		self._suggestionList = self.paletteWindow.group.suggestionList
 
 		self.dialog = self.paletteWindow.group.getNSView()
 		self._configureTaskTables()
@@ -713,60 +728,17 @@ class GlyphsToDoPlugin(PalettePlugin):
 			self._hideSuggestions()
 			return
 		self._currentSuggestions = suggestions
-		if not self._suggestionPopover:
-			self._createSuggestionPopover()
-			parentView = self.paletteWindow.group.newTaskField._nsObject
-			origin, size = parentView.bounds()
-			rect = (0, size[1], size[0], 1)
-			self._suggestionPopover.open(parentView=parentView, preferredEdge='bottom', relativeRect=rect)
 		self._selectedSuggestionIndex = 0
 		if self._suggestionList:
 			self._suggestionList.set(suggestions)
+			self._suggestionList.show(True)
 			self._suggestionList.setSelection([0])
-		self._resizeSuggestionPopover()
-
-	@objc.python_method
-	def _resizeSuggestionPopover(self):
-		if not self._suggestionPopover:
-			return
-		rows = max(1, min(8, len(self._currentSuggestions)))
-		height = 10 + rows * 22
-		self._suggestionPopover.resize(260, height)
 
 	@objc.python_method
 	def _hideSuggestions(self):
-		if self._suggestionPopover:
-			self._suggestionPopover.close()
-			self._suggestionPopover = None
-			self._suggestionList = None
-		self._currentSuggestions = []
-		self._selectedSuggestionIndex = -1
-		self._currentTokenRange = None
-
-	@objc.python_method
-	def _createSuggestionPopover(self):
-		pop = Popover((260, 120), behavior='transient')
-		pop.list = List(
-			(0, 0, -0, -0),
-			[],
-			columnDescriptions=[
-				{'title': Glyphs.localize({'en': 'Suggestion', 'fr': 'Suggestion'}), 'key': 'label'},
-				{'title': Glyphs.localize({'en': 'Type', 'fr': 'Type'}), 'key': 'kind', 'width': 80},
-			],
-			showColumnTitles=False,
-			enableDelete=False,
-			allowsMultipleSelection=False,
-			selectionCallback=self._suggestionSelectionChanged,
-			doubleClickCallback=self._suggestionDoubleClicked,
-		)
-		self._suggestionPopover = pop
-		self._suggestionList = pop.list
-		pop.bind('did close', self._suggestionPopoverClosed)
-
-	@objc.python_method
-	def _suggestionPopoverClosed(self, sender):
-		self._suggestionPopover = None
-		self._suggestionList = None
+		if self._suggestionList:
+			self._suggestionList.show(False)
+			self._suggestionList.set([])
 		self._currentSuggestions = []
 		self._selectedSuggestionIndex = -1
 		self._currentTokenRange = None

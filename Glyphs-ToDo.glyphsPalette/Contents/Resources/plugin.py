@@ -454,14 +454,23 @@ class GlyphsToDoPlugin(PalettePlugin):
 		glyph = font.glyphs[glyphName]
 		if glyph is None:
 			return
+		if glyphName.startswith('/'):
+			glyphCommand = glyphName
+		else:
+			glyphCommand = "/%s" % glyphName
 		document = getattr(font, 'parent', None)
 		if document:
-			windowController = document.windowController()
-			if windowController:
-				try:
-					windowController.setActiveGlyph_(glyph)
-				except Exception:
-					windowController.setActiveGlyphs_([glyph])
+			try:
+				windowController = document.windowController()
+				if windowController:
+					windowController.addTabWithString_(glyphCommand)
+					return
+			except Exception:
+				pass
+		try:
+			font.newTab(glyphCommand)
+		except Exception:
+			self.logToConsole(f"Glyphs-ToDo: unable to open glyph '{glyphName}'")
 
 	@objc.python_method
 	def _markDone(self, index, state):

@@ -96,12 +96,6 @@ class CategoryBadgeCell(NSTextFieldCell):
 		value = self.stringValue()
 		if not value:
 			return
-		rect = NSInsetRect(frame, 6, 6)
-		if rect.size.width <= 0 or rect.size.height <= 0:
-			return
-		path = NSBezierPath.bezierPathWithRoundedRect_xRadius_yRadius_(rect, self.radius, self.radius)
-		self.badgeColor.set()
-		path.fill()
 		paragraph = NSMutableParagraphStyle.alloc().init()
 		paragraph.setAlignment_(NSTextAlignmentCenter)
 		attributes = {
@@ -110,7 +104,17 @@ class CategoryBadgeCell(NSTextFieldCell):
 			NSParagraphStyleAttributeName: paragraph,
 		}
 		attrString = NSAttributedString.alloc().initWithString_attributes_(value, attributes)
-		attrString.drawInRect_(rect)
+		textSize = attrString.size()
+		width = textSize.width + 2
+		height = textSize.height + 2
+		centerY = frame.origin.y + frame.size.height / 2.0
+		x = frame.origin.x + 4
+		rect = NSMakeRect(x, centerY - height / 2.0, width, height)
+		path = NSBezierPath.bezierPathWithRoundedRect_xRadius_yRadius_(rect, self.radius, self.radius)
+		self.badgeColor.set()
+		path.fill()
+		textRect = NSMakeRect(rect.origin.x + 1, rect.origin.y + (height - textSize.height) / 2.0, textSize.width, textSize.height)
+		attrString.drawInRect_(textRect)
 
 
 class GlyphBadgeCell(NSTextFieldCell):
@@ -163,6 +167,7 @@ class HoverActionPanel(NSView):
 		self.doneButton = self._createButton('doneClicked:')
 		self.deleteButton = self._createButton('deleteClicked:')
 		self.buttons = [self.openButton, self.doneButton, self.deleteButton]
+		self._separatorPositions = []
 		for button in self.buttons:
 			self.addSubview_(button)
 		return self
@@ -174,6 +179,10 @@ class HoverActionPanel(NSView):
 		button.setButtonType_(NSButtonTypeMomentaryChange)
 		button.setTarget_(self)
 		button.setAction_(getattr(self, actionName))
+		try:
+			button.setContentTintColor_(NSColor.whiteColor())
+		except Exception:
+			pass
 		return button
 
 	@objc.python_method
@@ -187,8 +196,16 @@ class HoverActionPanel(NSView):
 
 	def drawRect_(self, rect):
 		path = NSBezierPath.bezierPathWithRoundedRect_xRadius_yRadius_(self.bounds(), 8, 8)
-		NSColor.colorWithCalibratedWhite_alpha_(0.1, 0.85).set()
+		NSColor.colorWithCalibratedWhite_alpha_(0.18, 0.9).set()
 		path.fill()
+		if self._separatorPositions:
+			NSColor.colorWithCalibratedWhite_alpha_(1.0, 0.35).set()
+			for pos in self._separatorPositions:
+				line = NSBezierPath.bezierPath()
+				line.setLineWidth_(1.0)
+				line.moveToPoint_((pos, rect.origin.y + 4))
+				line.lineToPoint_((pos, rect.origin.y + rect.size.height - 4))
+				line.stroke()
 
 	def setFrame_(self, frame):
 		objc.super(HoverActionPanel, self).setFrame_(frame)
@@ -202,9 +219,13 @@ class HoverActionPanel(NSView):
 		gap = 6
 		totalWidth = len(self.buttons) * buttonWidth + (len(self.buttons) - 1) * gap
 		startX = max(4, (width - totalWidth) / 2.0)
-		for button in self.buttons:
+		self._separatorPositions = []
+		for index, button in enumerate(self.buttons):
 			button.setFrame_(NSMakeRect(startX, (height - 20) / 2.0, buttonWidth, 20))
 			startX += buttonWidth + gap
+			if index < len(self.buttons) - 1:
+				self._separatorPositions.append(startX - gap / 2.0)
+		self.setNeedsDisplay_(True)
 
 	@objc.python_method
 	def presentInTable_atRow_(self, tableView, row):

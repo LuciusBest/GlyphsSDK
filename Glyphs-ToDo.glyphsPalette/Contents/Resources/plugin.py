@@ -307,8 +307,8 @@ class GlyphsToDoPlugin(PalettePlugin):
 			{'title': taskTitle, 'key': 'task', 'editable': False, 'width': 150, 'lineBreakMode': NSLineBreakByWordWrapping},
 			{'title': glyphTitle, 'key': 'glyph', 'editable': False, 'width': 70},
 			{'title': categoryTitle, 'key': 'category', 'editable': False, 'width': 90},
-			{'title': '', 'key': 'openAction', 'width': 60, 'binding': 'selectedIndex', 'cell': openCell},
-			{'title': '', 'key': 'statusAction', 'width': 120, 'binding': 'selectedIndex', 'cell': statusCell},
+			{'title': '', 'key': 'openAction', 'editable': True, 'width': 60, 'binding': 'selectedIndex', 'cell': openCell},
+			{'title': '', 'key': 'statusAction', 'editable': True, 'width': 120, 'binding': 'selectedIndex', 'cell': statusCell},
 		]
 		self._activeColumnKeys = [col['key'] for col in columns]
 		return columns
@@ -329,8 +329,8 @@ class GlyphsToDoPlugin(PalettePlugin):
 			{'title': taskTitle, 'key': 'task', 'editable': False, 'width': 150, 'lineBreakMode': NSLineBreakByWordWrapping},
 			{'title': glyphTitle, 'key': 'glyph', 'editable': False, 'width': 70},
 			{'title': categoryTitle, 'key': 'category', 'editable': False, 'width': 90},
-			{'title': '', 'key': 'openAction', 'width': 60, 'binding': 'selectedIndex', 'cell': openCell},
-			{'title': '', 'key': 'doneActions', 'width': 120, 'binding': 'selectedIndex', 'cell': doneCell},
+			{'title': '', 'key': 'openAction', 'editable': True, 'width': 60, 'binding': 'selectedIndex', 'cell': openCell},
+			{'title': '', 'key': 'doneActions', 'editable': True, 'width': 120, 'binding': 'selectedIndex', 'cell': doneCell},
 		]
 		self._doneColumnKeys = [col['key'] for col in columns]
 		return columns
@@ -390,7 +390,7 @@ class GlyphsToDoPlugin(PalettePlugin):
 		value = sender.get()[rowIndex].get(columnKey)
 		if columnKey == 'openAction' and value == 0:
 			self._openGlyph(targetIndex)
-			self._refreshList()
+			self._clearActionValue(sender, rowIndex, columnKey)
 		elif columnKey == 'statusAction':
 			if value == 0:
 				self._markDone(targetIndex, True)
@@ -413,7 +413,7 @@ class GlyphsToDoPlugin(PalettePlugin):
 		value = sender.get()[rowIndex].get(columnKey)
 		if columnKey == 'openAction' and value == 0:
 			self._openGlyph(targetIndex)
-			self._refreshList()
+			self._clearActionValue(sender, rowIndex, columnKey)
 		elif columnKey == 'doneActions':
 			if value == 0:
 				self._markDone(targetIndex, False)
@@ -454,9 +454,14 @@ class GlyphsToDoPlugin(PalettePlugin):
 		glyph = font.glyphs[glyphName]
 		if glyph is None:
 			return
-		document = font.parent()
+		document = getattr(font, 'parent', None)
 		if document:
-			document.windowController().setActiveGlyph_(glyph)
+			windowController = document.windowController()
+			if windowController:
+				try:
+					windowController.setActiveGlyph_(glyph)
+				except Exception:
+					windowController.setActiveGlyphs_([glyph])
 
 	@objc.python_method
 	def _markDone(self, index, state):
@@ -501,6 +506,16 @@ class GlyphsToDoPlugin(PalettePlugin):
 	def _setListRowHeight(self, listView, height):
 		try:
 			listView._tableView.setRowHeight_(height)
+		except Exception:
+			pass
+
+	@objc.python_method
+	def _clearActionValue(self, listView, rowIndex, columnKey):
+		try:
+			items = listView.get()
+			if 0 <= rowIndex < len(items):
+				items[rowIndex][columnKey] = -1
+				listView.set(items)
 		except Exception:
 			pass
 

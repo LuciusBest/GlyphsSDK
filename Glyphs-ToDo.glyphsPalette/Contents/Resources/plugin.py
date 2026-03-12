@@ -406,7 +406,7 @@ class GlyphsToDoPlugin(PalettePlugin):
 			[],
 			columnDescriptions=[
 				{'title': Glyphs.localize({'en': 'Suggestion', 'fr': 'Suggestion'}), 'key': 'label'},
-				{'title': Glyphs.localize({'en': 'Type', 'fr': 'Type'}), 'key': 'kind', 'width': 90},
+				{'title': Glyphs.localize({'en': 'Type', 'fr': 'Type'}), 'key': 'kind', 'width': 80, 'lineBreakMode': NSLineBreakByTruncatingTail},
 			],
 			showColumnTitles=False,
 			enableDelete=False,
@@ -417,6 +417,7 @@ class GlyphsToDoPlugin(PalettePlugin):
 		)
 		self.paletteWindow.group.suggestionList.show(False)
 		self._suggestionList = self.paletteWindow.group.suggestionList
+		self._configureSuggestionListColumns()
 
 		self.dialog = self.paletteWindow.group.getNSView()
 		self._configureTaskTables()
@@ -965,7 +966,7 @@ class GlyphsToDoPlugin(PalettePlugin):
 				[],
 				columnDescriptions=[
 					{'title': Glyphs.localize({'en': 'Suggestion', 'fr': 'Suggestion'}), 'key': 'label'},
-					{'title': Glyphs.localize({'en': 'Type', 'fr': 'Type'}), 'key': 'kind', 'width': 90},
+					{'title': Glyphs.localize({'en': 'Type', 'fr': 'Type'}), 'key': 'kind', 'width': 80, 'lineBreakMode': NSLineBreakByTruncatingTail},
 				],
 				showColumnTitles=False,
 				enableDelete=False,
@@ -976,11 +977,39 @@ class GlyphsToDoPlugin(PalettePlugin):
 			)
 			group.suggestionList.show(False)
 			self._suggestionList = group.suggestionList
+			self._configureSuggestionListColumns()
 			self._log('_ensureSuggestionList rebuilt list successfully')
 		except Exception as error:
 			self._log('_ensureSuggestionList failed:', error)
 			self._suggestionList = None
 		return self._suggestionList
+
+	@objc.python_method
+	def _configureSuggestionListColumns(self):
+		listView = self._suggestionList
+		if not listView:
+			return
+		tableView = getattr(listView, '_tableView', None)
+		if tableView is None:
+			return
+		try:
+			columns = list(tableView.tableColumns())
+		except Exception:
+			return
+		if len(columns) < 2:
+			return
+		labelColumn = columns[0]
+		typeColumn = columns[1]
+		try:
+			labelColumn.setResizingMask_(NSTableColumnUserResizingMask)
+		except Exception:
+			pass
+		try:
+			typeColumn.setWidth_(80)
+			typeColumn.setMinWidth_(60)
+			typeColumn.setResizingMask_(0)
+		except Exception:
+			pass
 
 	@objc.python_method
 	def _acceptCurrentSuggestion(self):

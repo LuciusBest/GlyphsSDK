@@ -313,7 +313,7 @@ class TagAttachmentCell(NSTextAttachmentCell):
 		return bgColor, NSColor.whiteColor()
 
 class TaskSentenceCell(NSTextFieldCell):
-	paddingX = 8
+	paddingX = 2
 	paddingY = 1
 	lineGap = 2
 	chipHorizontalPadding = 6
@@ -859,10 +859,8 @@ class GlyphsToDoPlugin(PalettePlugin):
 		self.deleteIcon = self._symbolImage('trash') or NSImage.imageNamed_(NSImageNameTrashEmpty)
 		self.undoIcon = self._symbolImage('arrow.uturn.left') or NSImage.imageNamed_(NSImageNameRefreshTemplate)
 
-		filterOptions = [Glyphs.localize({'en': 'All categories', 'fr': 'Toutes categories'})] + self.categoryStrings
-		self.paletteWindow.group.filterPopUp = PopUpButton((10, 76, -10, 24), filterOptions, sizeStyle='small', callback=self._filterChanged)
 		sectionSortOptions = [Glyphs.localize({'en': 'Categories', 'fr': 'Categories'})]
-		self.paletteWindow.group.tasksHeader = Group((10, 108, -10, 24))
+		self.paletteWindow.group.tasksHeader = Group((10, 76, -10, 24))
 		self.paletteWindow.group.tasksHeader.title = TextBox(
 			(0, 5, -170, 14),
 			Glyphs.localize({'en': 'Tasks List', 'fr': 'Liste des taches'}),
@@ -881,7 +879,7 @@ class GlyphsToDoPlugin(PalettePlugin):
 
 		activeColumns = self._buildActiveColumns()
 		self.paletteWindow.group.todoList = List(
-			(10, 132, -10, 140),
+			(10, 100, -10, 172),
 			[],
 			columnDescriptions=activeColumns,
 			showColumnTitles=False,

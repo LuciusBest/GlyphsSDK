@@ -1,0 +1,29 @@
+Export Kit Log
+Frame: Task1 (388x23)
+Exported text: Extra Bold
+  Text content: "Redraw"
+  Font: Helvetica
+Exported: Extra Bold (TEXT)
+Exported text: les contreformes intérieures de
+  Text content: "les contreformes intérieures de"
+  Font: Helvetica
+Exported: les contreformes intérieures de (TEXT)
+Exported text: o
+  Text content: "o"
+  Font: Helvetica
+Exported: o (TEXT)
+Exported text: o
+  Text content: "O"
+  Font: Helvetica
+Exported: o (TEXT)
+Exported text: o
+  Text content: "a"
+  Font: Helvetica
+Exported: o (TEXT)
+Exported text: o
+  Text content: "A"
+  Font: Helvetica
+Exported: o (TEXT)
+Total exported layers: 6
+Fonts used: Helvetica:Regular
+Export complete.

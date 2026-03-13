@@ -33,6 +33,7 @@ from AppKit import (
 	NSStringDrawingUsesFontLeading,
 	NSStringDrawingUsesLineFragmentOrigin,
 	NSTextAlignmentCenter,
+	NSTextAlignmentLeft,
 	NSTextAttachment,
 	NSTextAttachmentCell,
 	NSParagraphStyleAttributeName,
@@ -247,9 +248,9 @@ _MASTER_TAG_COLOR = _color_from_rgb(0.18, 0.45, 0.92)
 
 class TagAttachmentCell(NSTextAttachmentCell):
 	descriptor = None
-	horizontalPadding = 3
-	verticalPadding = 1
-	radius = 0
+	horizontalPadding = 6
+	verticalPadding = 2
+	radius = 6
 
 	def initWithDescriptor_(self, descriptor):
 		self = objc.super(TagAttachmentCell, self).initTextCell_('')
@@ -264,7 +265,7 @@ class TagAttachmentCell(NSTextAttachmentCell):
 		attributes = {NSFontAttributeName: self.font}
 		attrString = NSAttributedString.alloc().initWithString_attributes_(label, attributes)
 		size = attrString.size()
-		width = math.ceil(size.width) + (self.horizontalPadding * 2) + 2
+		width = math.ceil(size.width) + (self.horizontalPadding * 2)
 		height = math.ceil(size.height) + (self.verticalPadding * 2)
 		return NSMakeSize(width, height)
 
@@ -287,18 +288,16 @@ class TagAttachmentCell(NSTextAttachmentCell):
 		}
 		label = descriptor.get('label') or ''
 		attrString = NSAttributedString.alloc().initWithString_attributes_(label, attributes)
-		textSize = attrString.size()
-		textX = frame.origin.x + ((frame.size.width - textSize.width) / 2.0)
-		baselineY = frame.origin.y - self.baselineOffsetY()
-		textY = baselineY + self.font.descender()
+		textX = frame.origin.x + self.horizontalPadding
+		textY = frame.origin.y + self.verticalPadding
 		attrString.drawAtPoint_(NSMakePoint(textX, textY))
 
 	@objc.python_method
 	def baselineOffsetY(self):
 		try:
-			return self.font.descender() - self.verticalPadding - 1.0
+			return math.floor(self.font.descender()) - self.verticalPadding
 		except Exception:
-			return -3
+			return -4
 
 	@objc.python_method
 	def _colorsForDescriptor(self, descriptor):
@@ -314,7 +313,7 @@ class TagAttachmentCell(NSTextAttachmentCell):
 		return bgColor, NSColor.whiteColor()
 
 class TaskSentenceCell(NSTextFieldCell):
-	paddingX = 4
+	paddingX = 8
 	paddingY = 3
 
 	def init(self):
@@ -338,6 +337,7 @@ class TaskSentenceCell(NSTextFieldCell):
 		return getattr(self, '_storedValue', None)
 
 	def drawWithFrame_inView_(self, frame, view):
+		self._drawRowBackground_inView_(frame, view)
 		value = self.objectValue()
 		if isinstance(value, dict):
 			attributed = self._buildAttributedSentence(value)
@@ -356,10 +356,11 @@ class TaskSentenceCell(NSTextFieldCell):
 			text = value or ''
 			attributed = NSAttributedString.alloc().initWithString_attributes_(text, self._textAttributes({'done': False}))
 		if attributed is None:
-			return self.paddingY * 2
+			return int(math.ceil(self._lineHeight() + 6))
 		options = NSStringDrawingUsesLineFragmentOrigin | NSStringDrawingUsesFontLeading
 		rect = attributed.boundingRectWithSize_options_(NSMakeSize(usableWidth, 10000), options)
-		return int(math.ceil(rect.size.height + (self.paddingY * 2)))
+		contentHeight = max(rect.size.height, self._lineHeight())
+		return int(math.ceil(contentHeight + 6))
 
 	@objc.python_method
 	def _buildAttributedSentence(self, value):
@@ -417,6 +418,35 @@ class TaskSentenceCell(NSTextFieldCell):
 		if done:
 			attributes[NSStrikethroughStyleAttributeName] = 1
 		return attributes
+
+	@objc.python_method
+	def _lineHeight(self):
+		font = self._bodyFont()
+		try:
+			return font.defaultLineHeightForFont()
+		except Exception:
+			return font.pointSize() + 2
+
+	@objc.python_method
+	def _drawRowBackground_inView_(self, frame, view):
+		if self.isHighlighted():
+			try:
+				color = NSColor.alternateSelectedControlColor()
+			except Exception:
+				color = NSColor.selectedControlColor()
+		else:
+			row = -1
+			try:
+				row = view.rowAtPoint_(NSMakePoint(frame.origin.x + 1, frame.origin.y + 1))
+			except Exception:
+				pass
+			if row % 2:
+				color = NSColor.colorWithCalibratedWhite_alpha_(0.20, 0.92)
+			else:
+				color = NSColor.colorWithCalibratedWhite_alpha_(0.15, 0.92)
+		path = NSBezierPath.bezierPathWithRect_(frame)
+		color.set()
+		path.fill()
 
 	@objc.python_method
 	def _bodyFont(self):
@@ -659,11 +689,6 @@ class GlyphsToDoPlugin(PalettePlugin):
 			callback=self.addTask,
 			sizeStyle='small',
 		)
-		self.paletteWindow.group.sortLabel = TextBox(
-			(10, 60, 200, 14),
-			Glyphs.localize({'en': 'Sort by · Categories', 'fr': 'Trier par · Categories'}),
-			sizeStyle='small',
-		)
 		self.categoryStrings = [Glyphs.localize(names) for names in self.categoryOptions]
 		self.categoryKeys = [entry['en'] for entry in self.categoryOptions]
 		self._categoryLookup = self._buildCategoryLookup()
@@ -674,15 +699,27 @@ class GlyphsToDoPlugin(PalettePlugin):
 
 		filterOptions = [Glyphs.localize({'en': 'All categories', 'fr': 'Toutes categories'})] + self.categoryStrings
 		self.paletteWindow.group.filterPopUp = PopUpButton((10, 76, -10, 24), filterOptions, sizeStyle='small', callback=self._filterChanged)
-		self.paletteWindow.group.tasksListLabel = TextBox(
-			(10, 108, -10, 14),
+		sectionSortOptions = [Glyphs.localize({'en': 'Categories', 'fr': 'Categories'})]
+		self.paletteWindow.group.tasksHeader = Group((10, 108, -10, 24))
+		self.paletteWindow.group.tasksHeader.title = TextBox(
+			(0, 5, -170, 14),
 			Glyphs.localize({'en': 'Tasks List', 'fr': 'Liste des taches'}),
+			sizeStyle='small',
+		)
+		self.paletteWindow.group.tasksHeader.sortLabel = TextBox(
+			(-165, 5, 50, 14),
+			Glyphs.localize({'en': 'Sort by', 'fr': 'Trier'}),
+			sizeStyle='small',
+		)
+		self.paletteWindow.group.tasksHeader.sortPopUp = PopUpButton(
+			(-110, 0, 110, 24),
+			sectionSortOptions,
 			sizeStyle='small',
 		)
 
 		activeColumns = self._buildActiveColumns()
 		self.paletteWindow.group.todoList = List(
-			(10, 124, -10, 148),
+			(10, 132, -10, 140),
 			[],
 			columnDescriptions=activeColumns,
 			showColumnTitles=False,
@@ -693,10 +730,29 @@ class GlyphsToDoPlugin(PalettePlugin):
 			doubleClickCallback=self._handleActiveDoubleClick,
 		)
 
-		self.paletteWindow.group.doneToggle = Button(
-			(10, 276, -10, 22),
+		self.paletteWindow.group.doneHeader = Group((10, 276, -10, 24))
+		self.paletteWindow.group.doneHeader.toggle = Button(
+			(0, 0, -170, 22),
 			self._doneToggleTitle(0),
 			callback=self._toggleDoneVisibility,
+			sizeStyle='small',
+		)
+		try:
+			self.paletteWindow.group.doneHeader.toggle._nsObject.setBordered_(False)
+		except Exception:
+			pass
+		try:
+			self.paletteWindow.group.doneHeader.toggle._nsObject.cell().setAlignment_(NSTextAlignmentLeft)
+		except Exception:
+			pass
+		self.paletteWindow.group.doneHeader.sortLabel = TextBox(
+			(-165, 5, 50, 14),
+			Glyphs.localize({'en': 'Sort by', 'fr': 'Trier'}),
+			sizeStyle='small',
+		)
+		self.paletteWindow.group.doneHeader.sortPopUp = PopUpButton(
+			(-110, 0, 110, 24),
+			sectionSortOptions,
 			sizeStyle='small',
 		)
 
@@ -804,7 +860,7 @@ class GlyphsToDoPlugin(PalettePlugin):
 		self.paletteWindow.group.todoList.set(activeItems)
 		self.paletteWindow.group.doneList.set(doneItems)
 		self._updateRowHeights()
-		self.paletteWindow.group.doneToggle.setTitle(self._doneToggleTitle(len(doneItems)))
+		self.paletteWindow.group.doneHeader.toggle.setTitle(self._doneToggleTitle(len(doneItems)))
 		self._hideHoverActions()
 
 	@objc.python_method
@@ -1658,6 +1714,14 @@ class GlyphsToDoPlugin(PalettePlugin):
 		tableView.setAllowsMultipleSelection_(False)
 		tableView.setRowHeight_(rowHeight)
 		try:
+			tableView.setUsesAlternatingRowBackgroundColors_(False)
+		except Exception:
+			pass
+		try:
+			tableView.setBackgroundColor_(NSColor.colorWithCalibratedWhite_alpha_(0.15, 0.92))
+		except Exception:
+			pass
+		try:
 			tableView.setIntercellSpacing_(NSMakeSize(0, 0))
 		except Exception:
 			pass
@@ -1679,6 +1743,11 @@ class GlyphsToDoPlugin(PalettePlugin):
 					scrollView.setHasHorizontalScroller_(False)
 				except Exception:
 					pass
+		if scrollView:
+			try:
+				scrollView.setDrawsBackground_(False)
+			except Exception:
+				pass
 		self._installHoverUI()
 
 	@objc.python_method
@@ -2023,7 +2092,7 @@ class GlyphsToDoPlugin(PalettePlugin):
 	def _toggleDoneVisibility(self, sender):
 		self._doneExpanded = not self._doneExpanded
 		self.paletteWindow.group.doneList.show(self._doneExpanded)
-		self.paletteWindow.group.doneToggle.setTitle(self._doneToggleTitle(len(self.paletteWindow.group.doneList.get())))
+		self.paletteWindow.group.doneHeader.toggle.setTitle(self._doneToggleTitle(len(self.paletteWindow.group.doneList.get())))
 
 	@objc.python_method
 	def _doneToggleTitle(self, count):

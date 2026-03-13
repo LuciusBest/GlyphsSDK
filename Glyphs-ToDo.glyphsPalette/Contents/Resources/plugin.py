@@ -246,7 +246,7 @@ _MASTER_TAG_COLOR = _color_from_rgb(0.18, 0.45, 0.92)
 
 class TagAttachmentCell(NSTextAttachmentCell):
 	descriptor = None
-	horizontalPadding = 5
+	horizontalPadding = 3
 	verticalPadding = 1
 	radius = 0
 
@@ -263,7 +263,9 @@ class TagAttachmentCell(NSTextAttachmentCell):
 		attributes = {NSFontAttributeName: self.font}
 		attrString = NSAttributedString.alloc().initWithString_attributes_(label, attributes)
 		size = attrString.size()
-		return NSMakeSize(size.width + (self.horizontalPadding * 2), size.height + (self.verticalPadding * 2))
+		width = math.ceil(size.width) + (self.horizontalPadding * 2) + 2
+		height = math.ceil(size.height) + (self.verticalPadding * 2)
+		return NSMakeSize(width, height)
 
 	def drawWithFrame_inView_(self, frame, controlView):
 		self._drawTagInFrame(frame)
@@ -289,6 +291,13 @@ class TagAttachmentCell(NSTextAttachmentCell):
 		label = descriptor.get('label') or ''
 		attrString = NSAttributedString.alloc().initWithString_attributes_(label, attributes)
 		attrString.drawInRect_(textRect)
+
+	@objc.python_method
+	def baselineOffsetY(self):
+		try:
+			return math.floor(self.font.descender()) - self.verticalPadding
+		except Exception:
+			return -2
 
 	@objc.python_method
 	def _colorsForDescriptor(self, descriptor):
@@ -434,7 +443,7 @@ class TaskSentenceCell(NSTextFieldCell):
 				return None
 			attachment.setAttachmentCell_(cell)
 			size = cell.cellSize()
-			attachment.setBounds_(NSMakeRect(0, -1, size.width, size.height))
+			attachment.setBounds_(NSMakeRect(0, cell.baselineOffsetY(), size.width, size.height))
 			return attachment
 		except Exception:
 			return None

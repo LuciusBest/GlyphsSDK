@@ -3,6 +3,7 @@ from __future__ import division, print_function, unicode_literals
 
 import json
 import math
+import re
 import objc
 from Foundation import NSObject, NSNotificationCenter
 from AppKit import (
@@ -28,6 +29,8 @@ from AppKit import (
 	NSTableView,
 	NSTableViewNoColumnAutoresizing,
 	NSTableColumnUserResizingMask,
+	NSStringDrawingUsesFontLeading,
+	NSStringDrawingUsesLineFragmentOrigin,
 	NSTextAlignmentCenter,
 	NSTextAttachment,
 	NSTextAttachmentCell,
@@ -243,9 +246,9 @@ _MASTER_TAG_COLOR = _color_from_rgb(0.18, 0.45, 0.92)
 
 class TagAttachmentCell(NSTextAttachmentCell):
 	descriptor = None
-	horizontalPadding = 6
-	verticalPadding = 2
-	radius = 5
+	horizontalPadding = 5
+	verticalPadding = 1
+	radius = 0
 
 	def initWithDescriptor_(self, descriptor):
 		self = objc.super(TagAttachmentCell, self).initTextCell_('')
@@ -264,14 +267,10 @@ class TagAttachmentCell(NSTextAttachmentCell):
 
 	def drawWithFrame_inView_characterIndex_layoutManager_(self, frame, controlView, charIndex, layoutManager):
 		descriptor = self.descriptor or {}
-		bgColor, textColor, strokeColor = self._colorsForDescriptor(descriptor)
+		bgColor, textColor = self._colorsForDescriptor(descriptor)
 		path = NSBezierPath.bezierPathWithRoundedRect_xRadius_yRadius_(frame, self.radius, self.radius)
 		bgColor.set()
 		path.fill()
-		if strokeColor is not None:
-			strokeColor.set()
-			path.setLineWidth_(1.0)
-			path.stroke()
 		textRect = NSInsetRect(frame, self.horizontalPadding, self.verticalPadding)
 		paragraph = NSMutableParagraphStyle.alloc().init()
 		paragraph.setAlignment_(NSTextAlignmentCenter)
@@ -288,23 +287,16 @@ class TagAttachmentCell(NSTextAttachmentCell):
 	def _colorsForDescriptor(self, descriptor):
 		accent = self._accentColor(descriptor)
 		bgAlpha = 0.18
-		strokeAlpha = 0.6
-		textAlpha = 1.0
 		if descriptor.get('inactive'):
-			bgAlpha = 0.08
-			strokeAlpha = 0.25
-			textAlpha = 0.6
+			bgAlpha = 0.1
 		if descriptor.get('highlighted'):
-			bgAlpha = 0.26
-			strokeAlpha = 0.9
+			return NSColor.colorWithCalibratedWhite_alpha_(1.0, 0.24), NSColor.alternateSelectedControlTextColor()
 		try:
-			textColor = accent.colorWithAlphaComponent_(textAlpha)
-			strokeColor = accent.colorWithAlphaComponent_(strokeAlpha)
+			textColor = accent.colorWithAlphaComponent_(0.96)
 		except Exception:
 			textColor = accent
-			strokeColor = accent
 		bgColor = NSColor.colorWithCalibratedWhite_alpha_(1.0, bgAlpha)
-		return bgColor, textColor, strokeColor
+		return bgColor, textColor
 
 	@objc.python_method
 	def _accentColor(self, descriptor):
@@ -319,8 +311,8 @@ class TagAttachmentCell(NSTextAttachmentCell):
 		return _DEFAULT_CATEGORY_COLOR
 
 class TaskSentenceCell(NSTextFieldCell):
-	paddingX = 8
-	paddingY = 4
+	paddingX = 4
+	paddingY = 3
 
 	def init(self):
 		self = objc.super(TaskSentenceCell, self).init()
@@ -353,20 +345,48 @@ class TaskSentenceCell(NSTextFieldCell):
 		objc.super(TaskSentenceCell, self).drawWithFrame_inView_(frame, view)
 
 	@objc.python_method
+	def heightForValue_width_(self, value, width):
+		usableWidth = max(40, width - (self.paddingX * 2))
+		if isinstance(value, dict):
+			attributed = self._buildAttributedSentence(value)
+		else:
+			text = value or ''
+			attributed = NSAttributedString.alloc().initWithString_attributes_(text, self._textAttributes({'done': False}))
+		if attributed is None:
+			return self.paddingY * 2
+		options = NSStringDrawingUsesLineFragmentOrigin | NSStringDrawingUsesFontLeading
+		rect = attributed.boundingRectWithSize_options_(NSMakeSize(usableWidth, 10000), options)
+		return int(math.ceil(rect.size.height + (self.paddingY * 2)))
+
+	@objc.python_method
 	def _buildAttributedSentence(self, value):
+		domainAttributes = self._textAttributes(value)
+		content = NSMutableAttributedString.alloc().init()
+		segments = value.get('segments') or []
+		if segments:
+			for segment in segments:
+				if segment.get('kind') == 'tag':
+					descriptor = dict(segment.get('descriptor') or {})
+					descriptor['inactive'] = descriptor.get('inactive') or value.get('done')
+					descriptor['highlighted'] = bool(self.isHighlighted())
+					attachment = self._attachmentForDescriptor(descriptor)
+					if attachment:
+						content.appendAttributedString_(NSAttributedString.attributedStringWithAttachment_(attachment))
+					continue
+				text = segment.get('value') or ''
+				if text:
+					content.appendAttributedString_(NSAttributedString.alloc().initWithString_attributes_(text, domainAttributes))
+			return content
 		text = value.get('text') or ''
 		if not isinstance(text, str):
 			text = str(text)
 		text = text.strip()
 		if not text:
 			text = value.get('fallback') or ''
-		domainAttributes = self._textAttributes(value)
-		base = NSAttributedString.alloc().initWithString_attributes_(text, domainAttributes)
-		content = NSMutableAttributedString.alloc().initWithAttributedString_(base)
+		content.appendAttributedString_(NSAttributedString.alloc().initWithString_attributes_(text, domainAttributes))
 		tags = value.get('tags') or []
 		if tags:
-			space = NSAttributedString.alloc().initWithString_attributes_('  ', domainAttributes)
-			content.appendAttributedString_(space)
+			content.appendAttributedString_(NSAttributedString.alloc().initWithString_attributes_('  ', domainAttributes))
 			for descriptor in tags:
 				descriptor = dict(descriptor)
 				descriptor['inactive'] = descriptor.get('inactive') or value.get('done')
@@ -374,7 +394,7 @@ class TaskSentenceCell(NSTextFieldCell):
 				attachment = self._attachmentForDescriptor(descriptor)
 				if attachment:
 					content.appendAttributedString_(NSAttributedString.attributedStringWithAttachment_(attachment))
-					content.appendAttributedString_(NSAttributedString.alloc().initWithString_(' '))
+					content.appendAttributedString_(NSAttributedString.alloc().initWithString_attributes_(' ', domainAttributes))
 		return content
 
 	@objc.python_method
@@ -383,7 +403,8 @@ class TaskSentenceCell(NSTextFieldCell):
 		highlighted = bool(self.isHighlighted())
 		paragraph = NSMutableParagraphStyle.alloc().init()
 		paragraph.setLineBreakMode_(NSLineBreakByWordWrapping)
-		paragraph.setParagraphSpacing_(3.0)
+		paragraph.setLineSpacing_(1.0)
+		paragraph.setParagraphSpacing_(1.0)
 		color = self._textColor(done, highlighted)
 		attributes = {
 			NSFontAttributeName: self._bodyFont(),
@@ -603,6 +624,7 @@ class GlyphsToDoPlugin(PalettePlugin):
 		self._hoverPanel = None
 		self._hoverTracker = None
 		self._suggestionTypeColumnWidth = 70
+		self._minimumTaskRowHeight = 22
 
 		width, height = 260, 360
 		self.paletteWindow = Window((width, height))
@@ -655,7 +677,7 @@ class GlyphsToDoPlugin(PalettePlugin):
 			enableDelete=False,
 			allowsMultipleSelection=False,
 			drawFocusRing=False,
-			rowHeight=34,
+			rowHeight=self._minimumTaskRowHeight,
 			doubleClickCallback=self._handleActiveDoubleClick,
 		)
 
@@ -675,7 +697,7 @@ class GlyphsToDoPlugin(PalettePlugin):
 			enableDelete=False,
 			allowsMultipleSelection=False,
 			drawFocusRing=False,
-			rowHeight=30,
+			rowHeight=self._minimumTaskRowHeight,
 			doubleClickCallback=self._handleDoneDoubleClick,
 		)
 		self.paletteWindow.group.doneList.show(False)
@@ -738,6 +760,7 @@ class GlyphsToDoPlugin(PalettePlugin):
 			cleanText = ' '.join(glyphNames) or ' '.join(masterTokens) or categoryKey or ''
 		self.todoItems.insert(0, {
 			'task': cleanText,
+			'rawTask': rawText,
 			'done': False,
 			'glyphs': glyphNames,
 			'glyph': glyphNames[0] if glyphNames else '',
@@ -801,24 +824,84 @@ class GlyphsToDoPlugin(PalettePlugin):
 		text = (item.get('task') or '').strip()
 		if not text:
 			text = self._untitledTaskLabel
+		rawText = (item.get('rawTask') or '').strip()
 		categoryKey = self._categoryKeyForDisplay(item.get('category'))
+		segments = self._inlineSegmentsForItem(item, rawText)
+		if segments:
+			return {
+				'segments': segments,
+				'fallback': self._untitledTaskLabel,
+				'done': bool(item.get('done')),
+			}
 		tags = []
 		if categoryKey:
 			tags.append({
 				'type': 'category',
-				'label': self._categoryLabelFromKey(categoryKey),
+				'label': '/%s' % categoryKey,
 				'categoryKey': categoryKey,
 			})
 		for glyphName in self._glyphTokenList(item):
-			tags.append({'type': 'glyph', 'label': glyphName})
+			tags.append({'type': 'glyph', 'label': '/%s' % glyphName})
 		for masterName in self._mastersForTask(item):
-			tags.append({'type': 'master', 'label': masterName})
+			tags.append({'type': 'master', 'label': '/%s' % masterName})
 		return {
 			'text': text,
 			'fallback': self._untitledTaskLabel,
 			'tags': tags,
 			'done': bool(item.get('done')),
 		}
+
+	@objc.python_method
+	def _inlineSegmentsForItem(self, item, rawText):
+		if not rawText:
+			return []
+		segments = []
+		lastIndex = 0
+		for match in re.finditer(r'\S+', rawText):
+			start, end = match.span()
+			if start > lastIndex:
+				segments.append({'kind': 'text', 'value': rawText[lastIndex:start]})
+			token = match.group(0)
+			descriptor, trailingText = self._descriptorForInlineToken(token)
+			if descriptor is None:
+				segments.append({'kind': 'text', 'value': token})
+			else:
+				segments.append({'kind': 'tag', 'descriptor': descriptor})
+				if trailingText:
+					segments.append({'kind': 'text', 'value': trailingText})
+			lastIndex = end
+		if lastIndex < len(rawText):
+			segments.append({'kind': 'text', 'value': rawText[lastIndex:]})
+		return segments
+
+	@objc.python_method
+	def _descriptorForInlineToken(self, token):
+		if not token.startswith('/') or len(token) <= 1:
+			return (None, None)
+		trailingChars = []
+		core = token
+		while len(core) > 1 and core[-1] in '.,;:!?)]}':
+			trailingChars.append(core[-1])
+			core = core[:-1]
+		if len(core) <= 1:
+			return (None, None)
+		label = core[1:]
+		lower = label.lower()
+		if lower in self._categoryLookup:
+			categoryKey = self._categoryLookup[lower]
+			descriptor = {
+				'type': 'category',
+				'label': '/%s' % categoryKey,
+				'categoryKey': categoryKey,
+			}
+		else:
+			masterName = self._canonicalMasterName(label)
+			if masterName:
+				descriptor = {'type': 'master', 'label': '/%s' % masterName}
+			else:
+				glyphName = self._resolveGlyphName(label)
+				descriptor = {'type': 'glyph', 'label': '/%s' % glyphName}
+		return descriptor, ''.join(reversed(trailingChars))
 
 	@objc.python_method
 	def _saveTasks(self, font):
@@ -844,6 +927,7 @@ class GlyphsToDoPlugin(PalettePlugin):
 		for entry in items:
 			if isinstance(entry, dict):
 				task = entry.get('task')
+				rawTask = entry.get('rawTask')
 				done = bool(entry.get('done', False))
 				glyphName = entry.get('glyph', '')
 				glyphList = []
@@ -859,6 +943,7 @@ class GlyphsToDoPlugin(PalettePlugin):
 				category = self._normalizeCategory(entry.get('category'))
 			else:
 				task = entry
+				rawTask = None
 				done = False
 				glyphName = ''
 				glyphList = []
@@ -868,6 +953,7 @@ class GlyphsToDoPlugin(PalettePlugin):
 			if task:
 				normalized.append({
 					'task': task,
+					'rawTask': rawTask,
 					'done': done,
 					'glyph': glyphList[0] if glyphList else glyphName,
 					'glyphs': glyphList,
@@ -1467,7 +1553,6 @@ class GlyphsToDoPlugin(PalettePlugin):
 						masterTokens.append(masterName)
 					else:
 						glyphTokens.append(token)
-				cleanWords.append(token)
 			else:
 				cleanWords.append(word)
 		cleanText = ' '.join(filter(None, cleanWords)).strip()
@@ -1541,8 +1626,8 @@ class GlyphsToDoPlugin(PalettePlugin):
 
 	@objc.python_method
 	def _configureTaskTables(self):
-		self._styleListView(self.paletteWindow.group.todoList, 34, False)
-		self._styleListView(self.paletteWindow.group.doneList, 30, False)
+		self._styleListView(self.paletteWindow.group.todoList, self._minimumTaskRowHeight, False)
+		self._styleListView(self.paletteWindow.group.doneList, self._minimumTaskRowHeight, False)
 		self._installHoverUI()
 
 	@objc.python_method
@@ -1560,6 +1645,10 @@ class GlyphsToDoPlugin(PalettePlugin):
 			pass
 		tableView.setAllowsMultipleSelection_(False)
 		tableView.setRowHeight_(rowHeight)
+		try:
+			tableView.setIntercellSpacing_(NSMakeSize(0, 0))
+		except Exception:
+			pass
 		try:
 			for column in tableView.tableColumns():
 				column.setResizingMask_(NSTableColumnUserResizingMask)
@@ -1932,8 +2021,38 @@ class GlyphsToDoPlugin(PalettePlugin):
 
 	@objc.python_method
 	def _updateRowHeights(self):
-		self._setListRowHeight(self.paletteWindow.group.todoList, 34)
-		self._setListRowHeight(self.paletteWindow.group.doneList, 30)
+		self._setListRowHeight(self.paletteWindow.group.todoList, self._fittedRowHeightForList(self.paletteWindow.group.todoList))
+		self._setListRowHeight(self.paletteWindow.group.doneList, self._fittedRowHeightForList(self.paletteWindow.group.doneList))
+
+	@objc.python_method
+	def _fittedRowHeightForList(self, listView):
+		try:
+			tableView = listView._tableView
+			columns = tableView.tableColumns()
+		except Exception:
+			return self._minimumTaskRowHeight
+		if not columns:
+			return self._minimumTaskRowHeight
+		try:
+			columnWidth = columns[0].width()
+		except Exception:
+			columnWidth = 0
+		if columnWidth <= 0:
+			return self._minimumTaskRowHeight
+		items = listView.get() or []
+		if not items:
+			return self._minimumTaskRowHeight
+		cell = getattr(self, '_taskSentenceCell', None)
+		if cell is None:
+			return self._minimumTaskRowHeight
+		height = self._minimumTaskRowHeight
+		for item in items:
+			value = item.get('sentenceData') if isinstance(item, dict) else item
+			try:
+				height = max(height, cell.heightForValue_width_(value, columnWidth))
+			except Exception:
+				pass
+		return height
 
 	@objc.python_method
 	def _setListRowHeight(self, listView, height):

@@ -24,6 +24,7 @@ from AppKit import (
 	NSInsetRect,
 	NSLineBreakByTruncatingTail,
 	NSLineBreakByWordWrapping,
+	NSMakePoint,
 	NSMakeRect,
 	NSMakeSize,
 	NSTableView,
@@ -280,22 +281,22 @@ class TagAttachmentCell(NSTextAttachmentCell):
 		path = NSBezierPath.bezierPathWithRoundedRect_xRadius_yRadius_(frame, self.radius, self.radius)
 		bgColor.set()
 		path.fill()
-		textRect = NSInsetRect(frame, self.horizontalPadding, self.verticalPadding)
-		paragraph = NSMutableParagraphStyle.alloc().init()
-		paragraph.setAlignment_(NSTextAlignmentCenter)
 		attributes = {
 			NSFontAttributeName: self.font,
 			NSForegroundColorAttributeName: textColor,
-			NSParagraphStyleAttributeName: paragraph,
 		}
 		label = descriptor.get('label') or ''
 		attrString = NSAttributedString.alloc().initWithString_attributes_(label, attributes)
-		attrString.drawInRect_(textRect)
+		textSize = attrString.size()
+		textX = frame.origin.x + ((frame.size.width - textSize.width) / 2.0)
+		baselineY = frame.origin.y - self.baselineOffsetY()
+		textY = baselineY + self.font.descender()
+		attrString.drawAtPoint_(NSMakePoint(textX, textY))
 
 	@objc.python_method
 	def baselineOffsetY(self):
 		try:
-			return math.floor(self.font.descender()) - self.verticalPadding
+			return self.font.descender() - self.verticalPadding
 		except Exception:
 			return -2
 

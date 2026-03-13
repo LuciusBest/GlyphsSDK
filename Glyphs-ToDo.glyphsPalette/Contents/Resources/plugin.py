@@ -244,6 +244,7 @@ _CATEGORY_TAG_COLORS = {
 _DEFAULT_CATEGORY_COLOR = _color_from_rgb(0.36, 0.33, 0.86)
 _GLYPH_TAG_COLOR = _color_from_rgb(0.18, 0.62, 0.32)
 _MASTER_TAG_COLOR = _color_from_rgb(0.18, 0.45, 0.92)
+_SLASH_TOKEN_TRAILING_PUNCTUATION = '.,;:!?)]}'
 
 
 class TagAttachmentCell(NSTextAttachmentCell):
@@ -827,6 +828,7 @@ class GlyphsToDoPlugin(PalettePlugin):
 		self._hoverPanel = None
 		self._hoverTracker = None
 		self._suggestionTypeColumnWidth = 70
+		self._interfaceCallbackRegistered = False
 		self._taskSentenceCell = TaskSentenceCell.alloc().init()
 		self._minimumTaskRowHeight = self._taskSentenceCell.heightForValue_width_({'text': 'Ag', 'done': False}, 200)
 
@@ -959,14 +961,19 @@ class GlyphsToDoPlugin(PalettePlugin):
 
 	@objc.python_method
 	def start(self):
+		if getattr(self, '_interfaceCallbackRegistered', False):
+			return
 		Glyphs.addCallback(self._handleInterfaceUpdate, UPDATEINTERFACE)
+		self._interfaceCallbackRegistered = True
 
 	@objc.python_method
 	def __del__(self):
 		try:
-			Glyphs.removeCallback(self._handleInterfaceUpdate)
+			if getattr(self, '_interfaceCallbackRegistered', False):
+				Glyphs.removeCallback(self._handleInterfaceUpdate)
 		except Exception:
 			pass
+		self._interfaceCallbackRegistered = False
 
 	@objc.python_method
 	def addTask(self, sender=None):
@@ -1106,11 +1113,7 @@ class GlyphsToDoPlugin(PalettePlugin):
 	def _descriptorForInlineToken(self, token):
 		if not token.startswith('/') or len(token) <= 1:
 			return (None, None)
-		trailingChars = []
-		core = token
-		while len(core) > 1 and core[-1] in '.,;:!?)]}':
-			trailingChars.append(core[-1])
-			core = core[:-1]
+		core, trailingText = self._splitSlashTokenTrailingPunctuation(token)
 		if len(core) <= 1:
 			return (None, None)
 		label = core[1:]
@@ -1129,26 +1132,58 @@ class GlyphsToDoPlugin(PalettePlugin):
 			else:
 				glyphName = self._resolveGlyphName(label)
 				descriptor = {'type': 'glyph', 'label': glyphName}
-		return descriptor, ''.join(reversed(trailingChars))
+		return descriptor, trailingText
+
+	@objc.python_method
+	def _splitSlashTokenTrailingPunctuation(self, token):
+		core = token or ''
+		trailingChars = []
+		while len(core) > 1 and core[-1] in _SLASH_TOKEN_TRAILING_PUNCTUATION:
+			trailingChars.append(core[-1])
+			core = core[:-1]
+		return core, ''.join(reversed(trailingChars))
 
 	@objc.python_method
 	def _saveTasks(self, font):
-		payload = json.dumps(self.todoItems)
-		font.userData[self.defaultsKey] = payload
+		if font is None:
+			return False
+		try:
+			payload = json.dumps(self.todoItems)
+		except Exception as error:
+			self._log('_saveTasks serialize error:', error)
+			return False
+		try:
+			font.userData[self.defaultsKey] = payload
+			return True
+		except Exception as error:
+			self._log('_saveTasks userData write error:', error)
+		return False
 
 	@objc.python_method
 	def _loadTasks(self, font):
-		payload = font.userData.get(self.defaultsKey)
+		if font is None:
+			return []
+		try:
+			payload = font.userData.get(self.defaultsKey)
+		except Exception:
+			return []
 		if not payload:
 			return []
-		if not isinstance(payload, str):
+		if isinstance(payload, list):
+			items = payload
+		elif isinstance(payload, str):
 			try:
-				payload = json.dumps(payload)
+				items = json.loads(payload)
 			except Exception:
 				return []
-		try:
-			items = json.loads(payload)
-		except Exception:
+		else:
+			try:
+				items = json.loads(json.dumps(payload))
+			except Exception:
+				return []
+		if isinstance(items, dict):
+			items = [items]
+		if not isinstance(items, list):
 			return []
 
 		normalized = []
@@ -1156,27 +1191,44 @@ class GlyphsToDoPlugin(PalettePlugin):
 			if isinstance(entry, dict):
 				task = entry.get('task')
 				rawTask = entry.get('rawTask')
+				if task is None and isinstance(rawTask, str):
+					task = rawTask
 				done = bool(entry.get('done', False))
+				if not isinstance(task, str):
+					try:
+						task = str(task) if task is not None else ''
+					except Exception:
+						task = ''
+				task = task.strip()
+				if not isinstance(rawTask, str):
+					rawTask = None
 				glyphName = entry.get('glyph', '')
+				if not isinstance(glyphName, str):
+					glyphName = ''
 				glyphList = []
 				masterList = []
 				storedGlyphs = entry.get('glyphs')
 				if isinstance(storedGlyphs, list):
-					glyphList = [name for name in storedGlyphs if isinstance(name, str)]
+					glyphList = [name.strip() for name in storedGlyphs if isinstance(name, str) and name.strip()]
 				elif glyphName:
-					glyphList = [glyphName]
+					glyphName = glyphName.strip()
+					if glyphName:
+						glyphList = [glyphName]
+				glyphList = self._normalizeGlyphList(glyphList)
 				storedMasters = entry.get('masters')
 				if isinstance(storedMasters, list):
-					masterList = [name for name in storedMasters if isinstance(name, str)]
+					masterList = [name.strip() for name in storedMasters if isinstance(name, str) and name.strip()]
 				category = self._normalizeCategory(entry.get('category'))
-			else:
-				task = entry
+			elif isinstance(entry, str):
+				task = entry.strip()
 				rawTask = None
 				done = False
 				glyphName = ''
 				glyphList = []
 				category = self._categoryKeyFromIndex(0)
 				masterList = []
+			else:
+				continue
 
 			if task:
 				normalized.append({
@@ -1216,12 +1268,17 @@ class GlyphsToDoPlugin(PalettePlugin):
 				self.todoItems = []
 				self._refreshList()
 				self._hideHoverActions()
+			self._updateFontCaches(None)
+			self._hideSuggestions()
 			return
 
 		if font is not self._activeFont:
 			self._activeFont = font
+			self._updateFontCaches(font)
 			self.todoItems = self._loadTasks(font)
 			self._refreshList()
+			self._hideSuggestions()
+			return
 
 		self._updateFontCaches(font)
 
@@ -1771,7 +1828,11 @@ class GlyphsToDoPlugin(PalettePlugin):
 		masterTokens = []
 		for word in words:
 			if word.startswith('/') and len(word) > 1:
-				token = word[1:]
+				core, _ = self._splitSlashTokenTrailingPunctuation(word)
+				if len(core) <= 1:
+					cleanWords.append(word)
+					continue
+				token = core[1:]
 				lower = token.lower()
 				if categoryKey is None and lower in self._categoryLookup:
 					categoryKey = self._categoryLookup[lower]
@@ -1981,15 +2042,7 @@ class GlyphsToDoPlugin(PalettePlugin):
 
 	@objc.python_method
 	def _normalizeCategory(self, value):
-		if not value:
-			return self._categoryKeyFromIndex(0)
-		if value in self.categoryKeys:
-			return value
-		# try to match localized string
-		for idx, localized in enumerate(self.categoryStrings):
-			if localized == value:
-				return self.categoryKeys[idx]
-			return self._categoryKeyFromIndex(0)
+		return self._categoryKeyForDisplay(value)
 
 	@objc.python_method
 	def _buildCategoryLookup(self):
@@ -2094,10 +2147,14 @@ class GlyphsToDoPlugin(PalettePlugin):
 
 	@objc.python_method
 	def _openGlyph(self, index):
+		if not isinstance(index, int) or index < 0 or index >= len(self.todoItems):
+			return
 		font = self._currentFont()
 		if font is None:
 			return
 		task = self.todoItems[index]
+		if not isinstance(task, dict):
+			return
 		glyphNames = self._glyphsForTask(task)
 		masterNames = self._mastersForTask(task)
 		if not glyphNames and masterNames:
@@ -2212,7 +2269,7 @@ class GlyphsToDoPlugin(PalettePlugin):
 				glyphNames = [layer.parent.name for layer in layers if getattr(layer, 'parent', None)]
 			except Exception:
 				glyphNames = []
-			self.logToConsole("Glyphs-ToDo: unable to open glyphs '%s'" % ', '.join(glyphNames))
+			self._log("unable to open glyphs '%s'" % ', '.join(glyphNames))
 
 	@objc.python_method
 	def _layerForGlyph(self, glyph):
@@ -2234,6 +2291,10 @@ class GlyphsToDoPlugin(PalettePlugin):
 
 	@objc.python_method
 	def _markDone(self, index, state):
+		if not isinstance(index, int) or index < 0 or index >= len(self.todoItems):
+			return
+		if not isinstance(self.todoItems[index], dict):
+			return
 		self.todoItems[index]['done'] = bool(state)
 		font = self._currentFont()
 		if font:
@@ -2242,6 +2303,8 @@ class GlyphsToDoPlugin(PalettePlugin):
 
 	@objc.python_method
 	def _deleteTask(self, index):
+		if not isinstance(index, int) or index < 0 or index >= len(self.todoItems):
+			return
 		del self.todoItems[index]
 		font = self._currentFont()
 		if font:

@@ -160,6 +160,70 @@ class GlyphBadgeCell(NSTextFieldCell):
 			x += width + self.gap
 
 
+class ActionHoverButton(NSButton):
+	hoverCornerRadius = 5.0
+
+	def initWithFrame_(self, frame):
+		self = objc.super(ActionHoverButton, self).initWithFrame_(frame)
+		if self is None:
+			return None
+		self._hovered = False
+		self._trackingArea = None
+		self._configure()
+		return self
+
+	@objc.python_method
+	def _configure(self):
+		self.setBordered_(False)
+		self.setButtonType_(NSButtonTypeMomentaryChange)
+		try:
+			self.setFocusRingType_(0)
+		except Exception:
+			pass
+		try:
+			self.setContentTintColor_(NSColor.whiteColor())
+		except Exception:
+			pass
+		self.setWantsLayer_(False)
+		self._installTracking()
+
+	@objc.python_method
+	def _installTracking(self):
+		if self._trackingArea is not None:
+			self.removeTrackingArea_(self._trackingArea)
+		options = NSTrackingActiveAlways | NSTrackingInVisibleRect | NSTrackingMouseEnteredAndExited
+		self._trackingArea = NSTrackingArea.alloc().initWithRect_options_owner_userInfo_(self.bounds(), options, self, None)
+		self.addTrackingArea_(self._trackingArea)
+
+	def updateTrackingAreas(self):
+		self._installTracking()
+		objc.super(ActionHoverButton, self).updateTrackingAreas()
+
+	def mouseEntered_(self, event):
+		self._hovered = True
+		self.setNeedsDisplay_(True)
+
+	def mouseExited_(self, event):
+		self._hovered = False
+		self.setNeedsDisplay_(True)
+
+	def drawRect_(self, rect):
+		if self._hovered or self.isHighlighted():
+			accent = self._accentColor()
+			path = NSBezierPath.bezierPathWithRoundedRect_xRadius_yRadius_(self.bounds(), self.hoverCornerRadius, self.hoverCornerRadius)
+			accent.set()
+			path.fill()
+		objc.super(ActionHoverButton, self).drawRect_(rect)
+
+	@objc.python_method
+	def _accentColor(self):
+		alpha = 0.32 if self.isHighlighted() else 0.2
+		try:
+			return NSColor.controlAccentColor().colorWithAlphaComponent_(alpha)
+		except Exception:
+			return NSColor.colorWithCalibratedRed_green_blue_alpha_(0.0, 0.45, 1.0, alpha)
+
+
 def _color_from_rgb(red, green, blue, alpha=1.0):
 	return NSColor.colorWithCalibratedRed_green_blue_alpha_(red, green, blue, alpha)
 
@@ -200,10 +264,14 @@ class TagAttachmentCell(NSTextAttachmentCell):
 
 	def drawWithFrame_inView_characterIndex_layoutManager_(self, frame, controlView, charIndex, layoutManager):
 		descriptor = self.descriptor or {}
-		bgColor, textColor = self._colorsForDescriptor(descriptor)
+		bgColor, textColor, strokeColor = self._colorsForDescriptor(descriptor)
 		path = NSBezierPath.bezierPathWithRoundedRect_xRadius_yRadius_(frame, self.radius, self.radius)
 		bgColor.set()
 		path.fill()
+		if strokeColor is not None:
+			strokeColor.set()
+			path.setLineWidth_(1.0)
+			path.stroke()
 		textRect = NSInsetRect(frame, self.horizontalPadding, self.verticalPadding)
 		paragraph = NSMutableParagraphStyle.alloc().init()
 		paragraph.setAlignment_(NSTextAlignmentCenter)
@@ -218,42 +286,41 @@ class TagAttachmentCell(NSTextAttachmentCell):
 
 	@objc.python_method
 	def _colorsForDescriptor(self, descriptor):
+		accent = self._accentColor(descriptor)
+		bgAlpha = 0.18
+		strokeAlpha = 0.6
+		textAlpha = 1.0
+		if descriptor.get('inactive'):
+			bgAlpha = 0.08
+			strokeAlpha = 0.25
+			textAlpha = 0.6
+		if descriptor.get('highlighted'):
+			bgAlpha = 0.26
+			strokeAlpha = 0.9
+		try:
+			textColor = accent.colorWithAlphaComponent_(textAlpha)
+			strokeColor = accent.colorWithAlphaComponent_(strokeAlpha)
+		except Exception:
+			textColor = accent
+			strokeColor = accent
+		bgColor = NSColor.colorWithCalibratedWhite_alpha_(1.0, bgAlpha)
+		return bgColor, textColor, strokeColor
+
+	@objc.python_method
+	def _accentColor(self, descriptor):
 		tagType = descriptor.get('type')
 		categoryKey = descriptor.get('categoryKey')
-		base = _CATEGORY_TAG_COLORS.get(categoryKey, _DEFAULT_CATEGORY_COLOR) if tagType == 'category' else None
 		if tagType == 'glyph':
-			base = _GLYPH_TAG_COLOR
-		elif tagType == 'master':
-			base = _MASTER_TAG_COLOR
-		if base is None:
-			base = _DEFAULT_CATEGORY_COLOR
-		textColor = NSColor.whiteColor()
-		if descriptor.get('inactive'):
-			base = self._dimColor(base)
-			textColor = NSColor.colorWithCalibratedWhite_alpha_(1.0, 0.8)
-		if descriptor.get('highlighted'):
-			textColor = NSColor.alternateSelectedControlTextColor()
-			base = self._highlightColor(base)
-		return base, textColor
-
-	@objc.python_method
-	def _dimColor(self, color):
-		try:
-			return color.blendedColorWithFraction_ofColor_(0.55, NSColor.controlBackgroundColor())
-		except Exception:
-			return color
-
-	@objc.python_method
-	def _highlightColor(self, color):
-		try:
-			return color.blendedColorWithFraction_ofColor_(0.3, NSColor.alternateSelectedControlColor())
-		except Exception:
-			return color
-
+			return _GLYPH_TAG_COLOR
+		if tagType == 'master':
+			return _MASTER_TAG_COLOR
+		if categoryKey and categoryKey in _CATEGORY_TAG_COLORS:
+			return _CATEGORY_TAG_COLORS[categoryKey]
+		return _DEFAULT_CATEGORY_COLOR
 
 class TaskSentenceCell(NSTextFieldCell):
 	paddingX = 8
-	paddingY = 6
+	paddingY = 4
 
 	def init(self):
 		self = objc.super(TaskSentenceCell, self).init()
@@ -375,15 +442,9 @@ class HoverActionPanel(NSView):
 
 	@objc.python_method
 	def _createButton(self, actionName):
-		button = NSButton.alloc().initWithFrame_(NSMakeRect(0, 0, 24, 24))
-		button.setBordered_(False)
-		button.setButtonType_(NSButtonTypeMomentaryChange)
+		button = ActionHoverButton.alloc().initWithFrame_(NSMakeRect(0, 0, 24, 24))
 		button.setTarget_(self)
 		button.setAction_(getattr(self, actionName))
-		try:
-			button.setContentTintColor_(NSColor.whiteColor())
-		except Exception:
-			pass
 		return button
 
 	@objc.python_method
@@ -594,7 +655,7 @@ class GlyphsToDoPlugin(PalettePlugin):
 			enableDelete=False,
 			allowsMultipleSelection=False,
 			drawFocusRing=False,
-			rowHeight=52,
+			rowHeight=34,
 			doubleClickCallback=self._handleActiveDoubleClick,
 		)
 
@@ -614,7 +675,7 @@ class GlyphsToDoPlugin(PalettePlugin):
 			enableDelete=False,
 			allowsMultipleSelection=False,
 			drawFocusRing=False,
-			rowHeight=40,
+			rowHeight=30,
 			doubleClickCallback=self._handleDoneDoubleClick,
 		)
 		self.paletteWindow.group.doneList.show(False)
@@ -1480,8 +1541,8 @@ class GlyphsToDoPlugin(PalettePlugin):
 
 	@objc.python_method
 	def _configureTaskTables(self):
-		self._styleListView(self.paletteWindow.group.todoList, 52, False)
-		self._styleListView(self.paletteWindow.group.doneList, 40, False)
+		self._styleListView(self.paletteWindow.group.todoList, 34, False)
+		self._styleListView(self.paletteWindow.group.doneList, 30, False)
 		self._installHoverUI()
 
 	@objc.python_method
@@ -1871,8 +1932,8 @@ class GlyphsToDoPlugin(PalettePlugin):
 
 	@objc.python_method
 	def _updateRowHeights(self):
-		self._setListRowHeight(self.paletteWindow.group.todoList, 52)
-		self._setListRowHeight(self.paletteWindow.group.doneList, 40)
+		self._setListRowHeight(self.paletteWindow.group.todoList, 34)
+		self._setListRowHeight(self.paletteWindow.group.doneList, 30)
 
 	@objc.python_method
 	def _setListRowHeight(self, listView, height):

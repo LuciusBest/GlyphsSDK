@@ -1,0 +1,67 @@
+COMMENT METTRE À JOUR L’EXPORT FIGMA POUR CODEX
+
+Projet :
+/Users/paulpaturel/Desktop/Glyphs_Scripts_paulpaturel/Sans titre
+
+
+PRINCIPE
+
+Le fichier design/figma.json est une copie (snapshot) du fichier Figma.
+Il ne se met PAS à jour automatiquement.
+
+Chaque fois que le design Figma change, il faut relancer l’export.
+
+
+PROCÉDURE
+
+1. Ouvrir le Terminal
+
+2. Aller dans le dossier du projet :
+
+cd "/Users/paulpaturel/Desktop/Glyphs_Scripts_paulpaturel/Sans titre"
+
+3. Lancer le script d’export Figma :
+
+./update_figma.sh
+
+4. Le fichier suivant sera mis à jour :
+
+design/figma.json
+
+
+RÉSULTAT
+
+Codex pourra lire la nouvelle version du layout depuis :
+
+design/figma.json
+
+
+RAPPEL
+
+Token Figma : déjà stocké dans update_figma.sh  
+File ID Figma : is6LZSMBRNfATpbhKbwGfO
+
+Il n’est PAS nécessaire de recréer un token ou de modifier la commande.
+
+
+STRUCTURE DU PROJET
+
+Sans titre/
+│
+├ plugin.py
+├ update_figma.sh
+├ FIGMA_UPDATE.txt
+│
+└ design/
+  └ figma.json
+
+
+RÉSUMÉ ULTRA SIMPLE
+
+Quand tu modifies Figma :
+
+ouvrir Terminal
+
+cd "/Users/paulpaturel/Desktop/Glyphs_Scripts_paulpaturel/Sans titre"
+
+./update_figma.sh

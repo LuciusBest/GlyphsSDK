@@ -327,6 +327,10 @@ class TaskSentenceCell(NSTextFieldCell):
 		self._storedValue = None
 		self.setWraps_(True)
 		self.setLineBreakMode_(NSLineBreakByWordWrapping)
+		try:
+			self.setDrawsBackground_(False)
+		except Exception:
+			pass
 		return self
 
 	def setObjectValue_(self, value):
@@ -341,7 +345,6 @@ class TaskSentenceCell(NSTextFieldCell):
 		return getattr(self, '_storedValue', None)
 
 	def drawWithFrame_inView_(self, frame, view):
-		self._drawRowBackground_inView_(frame, view)
 		value = self.objectValue()
 		if isinstance(value, dict):
 			layout = self._layoutForValue_width_(value, frame.size.width)
@@ -605,27 +608,6 @@ class TaskSentenceCell(NSTextFieldCell):
 			return font.defaultLineHeightForFont()
 		except Exception:
 			return font.pointSize() + 2
-
-	@objc.python_method
-	def _drawRowBackground_inView_(self, frame, view):
-		if self.isHighlighted():
-			try:
-				color = NSColor.alternateSelectedControlColor()
-			except Exception:
-				color = NSColor.selectedControlColor()
-		else:
-			row = -1
-			try:
-				row = view.rowAtPoint_(NSMakePoint(frame.origin.x + 1, frame.origin.y + 1))
-			except Exception:
-				pass
-			if row % 2:
-				color = NSColor.colorWithCalibratedWhite_alpha_(0.20, 0.92)
-			else:
-				color = NSColor.colorWithCalibratedWhite_alpha_(0.15, 0.92)
-		path = NSBezierPath.bezierPathWithRect_(frame)
-		color.set()
-		path.fill()
 
 	@objc.python_method
 	def _bodyFont(self):

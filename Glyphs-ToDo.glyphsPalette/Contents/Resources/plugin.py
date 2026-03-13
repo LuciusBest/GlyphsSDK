@@ -11,6 +11,7 @@ from AppKit import (
 	NSButton,
 	NSColor,
 	NSFontAttributeName,
+	NSMutableAttributedString,
 	NSMutableParagraphStyle,
 	NSFont,
 	NSForegroundColorAttributeName,
@@ -23,11 +24,15 @@ from AppKit import (
 	NSLineBreakByTruncatingTail,
 	NSLineBreakByWordWrapping,
 	NSMakeRect,
+	NSMakeSize,
 	NSTableView,
 	NSTableViewNoColumnAutoresizing,
 	NSTableColumnUserResizingMask,
 	NSTextAlignmentCenter,
+	NSTextAttachment,
+	NSTextAttachmentCell,
 	NSParagraphStyleAttributeName,
+	NSStrikethroughStyleAttributeName,
 	NSTextFieldCell,
 	NSTrackingActiveAlways,
 	NSTrackingArea,
@@ -154,6 +159,202 @@ class GlyphBadgeCell(NSTextFieldCell):
 			attr.drawInRect_(textRect)
 			x += width + self.gap
 
+
+def _color_from_rgb(red, green, blue, alpha=1.0):
+	return NSColor.colorWithCalibratedRed_green_blue_alpha_(red, green, blue, alpha)
+
+
+_CATEGORY_TAG_COLORS = {
+	'General': _color_from_rgb(0.32, 0.34, 0.78),
+	'Drawing': _color_from_rgb(0.93, 0.42, 0.24),
+	'Spacing': _color_from_rgb(0.19, 0.53, 0.84),
+	'Kerning': _color_from_rgb(0.27, 0.56, 0.42),
+	'Hinting': _color_from_rgb(0.58, 0.32, 0.74),
+	'Proofing': _color_from_rgb(0.20, 0.27, 0.35),
+}
+_DEFAULT_CATEGORY_COLOR = _color_from_rgb(0.36, 0.33, 0.86)
+_GLYPH_TAG_COLOR = _color_from_rgb(0.18, 0.62, 0.32)
+_MASTER_TAG_COLOR = _color_from_rgb(0.18, 0.45, 0.92)
+
+
+class TagAttachmentCell(NSTextAttachmentCell):
+	descriptor = None
+	horizontalPadding = 6
+	verticalPadding = 2
+	radius = 5
+
+	def initWithDescriptor_(self, descriptor):
+		self = objc.super(TagAttachmentCell, self).initTextCell_('')
+		if self is None:
+			return None
+		self.descriptor = descriptor or {}
+		self.font = NSFont.systemFontOfSize_(10)
+		return self
+
+	def cellSize(self):
+		label = self.descriptor.get('label') or ''
+		attributes = {NSFontAttributeName: self.font}
+		attrString = NSAttributedString.alloc().initWithString_attributes_(label, attributes)
+		size = attrString.size()
+		return NSMakeSize(size.width + (self.horizontalPadding * 2), size.height + (self.verticalPadding * 2))
+
+	def drawWithFrame_inView_characterIndex_layoutManager_(self, frame, controlView, charIndex, layoutManager):
+		descriptor = self.descriptor or {}
+		bgColor, textColor = self._colorsForDescriptor(descriptor)
+		path = NSBezierPath.bezierPathWithRoundedRect_xRadius_yRadius_(frame, self.radius, self.radius)
+		bgColor.set()
+		path.fill()
+		textRect = NSInsetRect(frame, self.horizontalPadding, self.verticalPadding)
+		paragraph = NSMutableParagraphStyle.alloc().init()
+		paragraph.setAlignment_(NSTextAlignmentCenter)
+		attributes = {
+			NSFontAttributeName: self.font,
+			NSForegroundColorAttributeName: textColor,
+			NSParagraphStyleAttributeName: paragraph,
+		}
+		label = descriptor.get('label') or ''
+		attrString = NSAttributedString.alloc().initWithString_attributes_(label, attributes)
+		attrString.drawInRect_(textRect)
+
+	@objc.python_method
+	def _colorsForDescriptor(self, descriptor):
+		tagType = descriptor.get('type')
+		categoryKey = descriptor.get('categoryKey')
+		base = _CATEGORY_TAG_COLORS.get(categoryKey, _DEFAULT_CATEGORY_COLOR) if tagType == 'category' else None
+		if tagType == 'glyph':
+			base = _GLYPH_TAG_COLOR
+		elif tagType == 'master':
+			base = _MASTER_TAG_COLOR
+		if base is None:
+			base = _DEFAULT_CATEGORY_COLOR
+		textColor = NSColor.whiteColor()
+		if descriptor.get('inactive'):
+			base = self._dimColor(base)
+			textColor = NSColor.colorWithCalibratedWhite_alpha_(1.0, 0.8)
+		if descriptor.get('highlighted'):
+			textColor = NSColor.alternateSelectedControlTextColor()
+			base = self._highlightColor(base)
+		return base, textColor
+
+	@objc.python_method
+	def _dimColor(self, color):
+		try:
+			return color.blendedColorWithFraction_ofColor_(0.55, NSColor.controlBackgroundColor())
+		except Exception:
+			return color
+
+	@objc.python_method
+	def _highlightColor(self, color):
+		try:
+			return color.blendedColorWithFraction_ofColor_(0.3, NSColor.alternateSelectedControlColor())
+		except Exception:
+			return color
+
+
+class TaskSentenceCell(NSTextFieldCell):
+	paddingX = 8
+	paddingY = 6
+
+	def init(self):
+		self = objc.super(TaskSentenceCell, self).init()
+		if self is None:
+			return None
+		self._storedValue = None
+		self.setWraps_(True)
+		self.setLineBreakMode_(NSLineBreakByWordWrapping)
+		return self
+
+	def setObjectValue_(self, value):
+		self._storedValue = value
+		if isinstance(value, dict):
+			text = value.get('text', '')
+		else:
+			text = value
+		objc.super(TaskSentenceCell, self).setObjectValue_(text)
+
+	def objectValue(self):
+		return getattr(self, '_storedValue', None)
+
+	def drawWithFrame_inView_(self, frame, view):
+		value = self.objectValue()
+		if isinstance(value, dict):
+			attributed = self._buildAttributedSentence(value)
+			if attributed is not None:
+				inset = NSInsetRect(frame, self.paddingX, self.paddingY)
+				attributed.drawInRect_(inset)
+				return
+		objc.super(TaskSentenceCell, self).drawWithFrame_inView_(frame, view)
+
+	@objc.python_method
+	def _buildAttributedSentence(self, value):
+		text = value.get('text') or ''
+		if not isinstance(text, str):
+			text = str(text)
+		text = text.strip()
+		if not text:
+			text = value.get('fallback') or ''
+		domainAttributes = self._textAttributes(value)
+		base = NSAttributedString.alloc().initWithString_attributes_(text, domainAttributes)
+		content = NSMutableAttributedString.alloc().initWithAttributedString_(base)
+		tags = value.get('tags') or []
+		if tags:
+			space = NSAttributedString.alloc().initWithString_attributes_('  ', domainAttributes)
+			content.appendAttributedString_(space)
+			for descriptor in tags:
+				descriptor = dict(descriptor)
+				descriptor['inactive'] = descriptor.get('inactive') or value.get('done')
+				descriptor['highlighted'] = bool(self.isHighlighted())
+				attachment = self._attachmentForDescriptor(descriptor)
+				if attachment:
+					content.appendAttributedString_(NSAttributedString.attributedStringWithAttachment_(attachment))
+					content.appendAttributedString_(NSAttributedString.alloc().initWithString_(' '))
+		return content
+
+	@objc.python_method
+	def _textAttributes(self, value):
+		done = bool(value.get('done'))
+		highlighted = bool(self.isHighlighted())
+		paragraph = NSMutableParagraphStyle.alloc().init()
+		paragraph.setLineBreakMode_(NSLineBreakByWordWrapping)
+		paragraph.setParagraphSpacing_(3.0)
+		color = self._textColor(done, highlighted)
+		attributes = {
+			NSFontAttributeName: self._bodyFont(),
+			NSForegroundColorAttributeName: color,
+			NSParagraphStyleAttributeName: paragraph,
+		}
+		if done:
+			attributes[NSStrikethroughStyleAttributeName] = 1
+		return attributes
+
+	@objc.python_method
+	def _bodyFont(self):
+		if not hasattr(self, '_cachedBodyFont'):
+			self._cachedBodyFont = NSFont.systemFontOfSize_(11)
+		return self._cachedBodyFont
+
+	@objc.python_method
+	def _textColor(self, done, highlighted):
+		if highlighted:
+			return NSColor.alternateSelectedControlTextColor()
+		if done:
+			try:
+				return NSColor.disabledControlTextColor()
+			except Exception:
+				return NSColor.colorWithCalibratedWhite_alpha_(0.45, 1.0)
+		return NSColor.textColor()
+
+	@objc.python_method
+	def _attachmentForDescriptor(self, descriptor):
+		try:
+			attachment = NSTextAttachment.alloc().init()
+			cell = TagAttachmentCell.alloc().initWithDescriptor_(descriptor)
+			if not cell:
+				return None
+			attachment.setAttachmentCell_(cell)
+			return attachment
+		except Exception:
+			return None
 
 class HoverActionPanel(NSView):
 	def initWithController_(self, controller):
@@ -318,6 +519,10 @@ class GlyphsToDoPlugin(PalettePlugin):
 			'en': 'Glyphs-ToDo',
 			'fr': 'Glyphs-ToDo',
 		})
+		self._untitledTaskLabel = Glyphs.localize({
+			'en': 'Untitled task',
+			'fr': 'Tache sans titre',
+		})
 
 		self.todoItems = []
 		self._activeIndexMap = []
@@ -342,21 +547,26 @@ class GlyphsToDoPlugin(PalettePlugin):
 		self.paletteWindow = Window((width, height))
 		self.paletteWindow.group = Group((0, 0, width, height))
 
-		self.paletteWindow.group.taskLabel = TextBox((10, 8, -10, 14), Glyphs.localize({'en': 'Task', 'fr': 'Tache'}), sizeStyle='small')
+		self.paletteWindow.group.taskLabel = TextBox((10, 8, -10, 14), Glyphs.localize({'en': 'New Task', 'fr': 'Nouvelle tache'}), sizeStyle='small')
 		self.paletteWindow.group.newTaskField = EditText(
-			(10, 20, -90, 24),
+			(10, 24, -110, 26),
 			placeholder=Glyphs.localize({
-				'en': 'New task',
-				'fr': 'Nouvelle tache',
+				'en': 'e.g. /redraw counters /o /O /a /A',
+				'fr': 'ex: /redraw counters /o /O /a /A',
 			}),
 			sizeStyle='small',
 		)
 		self.taskFieldDelegate = TaskFieldDelegate.alloc().initWithController_(self)
 		self.paletteWindow.group.newTaskField._nsObject.setDelegate_(self.taskFieldDelegate)
 		self.paletteWindow.group.addButton = Button(
-			(-80, 20, -10, 24),
-			Glyphs.localize({'en': 'Add', 'fr': 'Ajouter'}),
+			(-100, 24, -10, 26),
+			Glyphs.localize({'en': 'Add Task', 'fr': 'Ajouter la tache'}),
 			callback=self.addTask,
+			sizeStyle='small',
+		)
+		self.paletteWindow.group.sortLabel = TextBox(
+			(10, 60, 200, 14),
+			Glyphs.localize({'en': 'Sort by · Categories', 'fr': 'Trier par · Categories'}),
 			sizeStyle='small',
 		)
 		self.categoryStrings = [Glyphs.localize(names) for names in self.categoryOptions]
@@ -368,23 +578,28 @@ class GlyphsToDoPlugin(PalettePlugin):
 		self.undoIcon = self._symbolImage('arrow.uturn.left') or NSImage.imageNamed_(NSImageNameRefreshTemplate)
 
 		filterOptions = [Glyphs.localize({'en': 'All categories', 'fr': 'Toutes categories'})] + self.categoryStrings
-		self.paletteWindow.group.filterPopUp = PopUpButton((10, 56, -10, 22), filterOptions, sizeStyle='small', callback=self._filterChanged)
+		self.paletteWindow.group.filterPopUp = PopUpButton((10, 76, -10, 24), filterOptions, sizeStyle='small', callback=self._filterChanged)
+		self.paletteWindow.group.tasksListLabel = TextBox(
+			(10, 108, -10, 14),
+			Glyphs.localize({'en': 'Tasks List', 'fr': 'Liste des taches'}),
+			sizeStyle='small',
+		)
 
 		activeColumns = self._buildActiveColumns()
 		self.paletteWindow.group.todoList = List(
-			(10, 90, -10, 172),
+			(10, 124, -10, 148),
 			[],
 			columnDescriptions=activeColumns,
-			showColumnTitles=True,
+			showColumnTitles=False,
 			enableDelete=False,
 			allowsMultipleSelection=False,
 			drawFocusRing=False,
-			rowHeight=40,
+			rowHeight=52,
 			doubleClickCallback=self._handleActiveDoubleClick,
 		)
 
 		self.paletteWindow.group.doneToggle = Button(
-			(10, 270, -10, 22),
+			(10, 276, -10, 22),
 			self._doneToggleTitle(0),
 			callback=self._toggleDoneVisibility,
 			sizeStyle='small',
@@ -392,14 +607,14 @@ class GlyphsToDoPlugin(PalettePlugin):
 
 		doneColumns = self._buildDoneColumns()
 		self.paletteWindow.group.doneList = List(
-			(10, 298, -10, 100),
+			(10, 304, -10, 54),
 			[],
 			columnDescriptions=doneColumns,
 			showColumnTitles=False,
 			enableDelete=False,
 			allowsMultipleSelection=False,
 			drawFocusRing=False,
-			rowHeight=28,
+			rowHeight=40,
 			doubleClickCallback=self._handleDoneDoubleClick,
 		)
 		self.paletteWindow.group.doneList.show(False)
@@ -500,8 +715,7 @@ class GlyphsToDoPlugin(PalettePlugin):
 	def _baseDisplayItem(self, item):
 		return {
 			'task': item.get('task', ''),
-			'categoryLabel': self._categoryLabelFromKey(item.get('category')),
-			'glyphTokens': self._glyphTokenList(item),
+			'sentenceData': self._sentenceDisplayData(item),
 		}
 
 	@objc.python_method
@@ -520,6 +734,30 @@ class GlyphsToDoPlugin(PalettePlugin):
 	@objc.python_method
 	def _doneDisplayItem(self, item):
 		return self._baseDisplayItem(item)
+
+	@objc.python_method
+	def _sentenceDisplayData(self, item):
+		text = (item.get('task') or '').strip()
+		if not text:
+			text = self._untitledTaskLabel
+		categoryKey = self._categoryKeyForDisplay(item.get('category'))
+		tags = []
+		if categoryKey:
+			tags.append({
+				'type': 'category',
+				'label': self._categoryLabelFromKey(categoryKey),
+				'categoryKey': categoryKey,
+			})
+		for glyphName in self._glyphTokenList(item):
+			tags.append({'type': 'glyph', 'label': glyphName})
+		for masterName in self._mastersForTask(item):
+			tags.append({'type': 'master', 'label': masterName})
+		return {
+			'text': text,
+			'fallback': self._untitledTaskLabel,
+			'tags': tags,
+			'done': bool(item.get('done')),
+		}
 
 	@objc.python_method
 	def _saveTasks(self, font):
@@ -1210,32 +1448,40 @@ class GlyphsToDoPlugin(PalettePlugin):
 
 	@objc.python_method
 	def _buildActiveColumns(self):
-		glyphTitle = Glyphs.localize({'en': 'Glyph', 'fr': 'Glyphe'})
-		categoryTitle = Glyphs.localize({'en': 'Category', 'fr': 'Categorie'})
-		taskTitle = Glyphs.localize({'en': 'Task Name', 'fr': 'Intitule'})
-		if not hasattr(self, '_categoryBadgeCell'):
-			self._categoryBadgeCell = CategoryBadgeCell.alloc().init()
-		if not hasattr(self, '_glyphBadgeCell'):
-			self._glyphBadgeCell = GlyphBadgeCell.alloc().init()
-		columns = [
-			{'title': categoryTitle, 'key': 'categoryLabel', 'editable': False, 'width': 110, 'cell': self._categoryBadgeCell},
-			{'title': glyphTitle, 'key': 'glyphTokens', 'editable': False, 'width': 150, 'cell': self._glyphBadgeCell},
-			{'title': taskTitle, 'key': 'task', 'editable': False, 'width': 240, 'lineBreakMode': NSLineBreakByTruncatingTail},
+		taskTitle = Glyphs.localize({'en': 'Task', 'fr': 'Tache'})
+		if not hasattr(self, '_taskSentenceCell'):
+			self._taskSentenceCell = TaskSentenceCell.alloc().init()
+		return [
+			{
+				'title': taskTitle,
+				'key': 'sentenceData',
+				'editable': False,
+				'width': 320,
+				'lineBreakMode': NSLineBreakByWordWrapping,
+				'cell': self._taskSentenceCell,
+			},
 		]
-		return columns
 
 	@objc.python_method
 	def _buildDoneColumns(self):
 		taskTitle = Glyphs.localize({'en': 'Completed Task', 'fr': 'Tache terminee'})
-		columns = [
-			{'title': taskTitle, 'key': 'task', 'editable': False, 'width': 320, 'lineBreakMode': NSLineBreakByTruncatingTail},
+		if not hasattr(self, '_taskSentenceCell'):
+			self._taskSentenceCell = TaskSentenceCell.alloc().init()
+		return [
+			{
+				'title': taskTitle,
+				'key': 'sentenceData',
+				'editable': False,
+				'width': 320,
+				'lineBreakMode': NSLineBreakByWordWrapping,
+				'cell': self._taskSentenceCell,
+			},
 		]
-		return columns
 
 	@objc.python_method
 	def _configureTaskTables(self):
-		self._styleListView(self.paletteWindow.group.todoList, 36, True)
-		self._styleListView(self.paletteWindow.group.doneList, 26, False)
+		self._styleListView(self.paletteWindow.group.todoList, 52, False)
+		self._styleListView(self.paletteWindow.group.doneList, 40, False)
 		self._installHoverUI()
 
 	@objc.python_method
@@ -1265,6 +1511,12 @@ class GlyphsToDoPlugin(PalettePlugin):
 				pass
 			if scrollView:
 				scrollView.setHasHorizontalScroller_(True)
+		else:
+			if scrollView:
+				try:
+					scrollView.setHasHorizontalScroller_(False)
+				except Exception:
+					pass
 		self._installHoverUI()
 
 	@objc.python_method
@@ -1323,6 +1575,18 @@ class GlyphsToDoPlugin(PalettePlugin):
 		if key in self.categoryKeys:
 			return self.categoryStrings[self.categoryKeys.index(key)]
 		return self.categoryStrings[0]
+
+	@objc.python_method
+	def _categoryKeyForDisplay(self, value):
+		if not value:
+			return self._categoryKeyFromIndex(0)
+		if value in self.categoryKeys:
+			return value
+		if isinstance(value, str):
+			lookup = self._categoryLookup.get(value.lower())
+			if lookup:
+				return lookup
+		return self._categoryKeyFromIndex(0)
 
 	@objc.python_method
 	def _normalizeCategory(self, value):
@@ -1601,14 +1865,14 @@ class GlyphsToDoPlugin(PalettePlugin):
 
 	@objc.python_method
 	def _doneToggleTitle(self, count):
-		base = Glyphs.localize({'en': 'Completed (%d)', 'fr': 'Terminees (%d)'}) % count
+		base = Glyphs.localize({'en': 'Completed Tasks (%d)', 'fr': 'Taches terminees (%d)'}) % count
 		prefix = '[-] ' if self._doneExpanded else '[+] '
 		return prefix + base
 
 	@objc.python_method
 	def _updateRowHeights(self):
-		self._setListRowHeight(self.paletteWindow.group.todoList, 36)
-		self._setListRowHeight(self.paletteWindow.group.doneList, 26)
+		self._setListRowHeight(self.paletteWindow.group.todoList, 52)
+		self._setListRowHeight(self.paletteWindow.group.doneList, 40)
 
 	@objc.python_method
 	def _setListRowHeight(self, listView, height):

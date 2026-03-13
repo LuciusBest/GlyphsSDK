@@ -2282,38 +2282,12 @@ class GlyphsToDoPlugin(PalettePlugin):
 
 	@objc.python_method
 	def _updateRowHeights(self):
-		self._setListRowHeight(self.paletteWindow.group.todoList, self._fittedRowHeightForList(self.paletteWindow.group.todoList))
-		self._setListRowHeight(self.paletteWindow.group.doneList, self._fittedRowHeightForList(self.paletteWindow.group.doneList))
+		self._setListRowHeight(self.paletteWindow.group.todoList, self._minimumTaskRowHeight)
+		self._setListRowHeight(self.paletteWindow.group.doneList, self._minimumTaskRowHeight)
 
 	@objc.python_method
 	def _fittedRowHeightForList(self, listView):
-		try:
-			tableView = listView._tableView
-			columns = tableView.tableColumns()
-		except Exception:
-			return self._minimumTaskRowHeight
-		if not columns:
-			return self._minimumTaskRowHeight
-		try:
-			columnWidth = columns[0].width()
-		except Exception:
-			columnWidth = 0
-		if columnWidth <= 0:
-			return self._minimumTaskRowHeight
-		items = listView.get() or []
-		if not items:
-			return self._minimumTaskRowHeight
-		cell = getattr(self, '_taskSentenceCell', None)
-		if cell is None:
-			return self._minimumTaskRowHeight
-		height = self._minimumTaskRowHeight
-		for item in items:
-			value = item.get('sentenceData') if isinstance(item, dict) else item
-			try:
-				height = max(height, cell.heightForValue_width_(value, columnWidth))
-			except Exception:
-				pass
-		return height
+		return self._minimumTaskRowHeight
 
 	@objc.python_method
 	def _setListRowHeight(self, listView, height):

@@ -1,0 +1,229 @@
+Export Kit Log
+Frame: DesignPrototype (408x390.70001220703125)
+Exported text: Glyphs-ToDo
+  Text content: "Glyphs-ToDo"
+  Font: Helvetica
+Exported: Glyphs-ToDo (TEXT)
+Exported text: New Task
+  Text content: "New Task"
+  Font: Helvetica
+Exported: New Task (TEXT)
+Exported text: Exemple Input Text
+  Text content: "/redraw les contreformes intérieures de /o /O /a /A"
+  Font: Helvetica
+Exported: Exemple Input Text (TEXT)
+Exported text: Add Task
+  Text content: "Add Task"
+  Font: Helvetica
+Exported: Add Task (TEXT)
+Exported text: Tasks List
+  Text content: "Tasks List"
+  Font: Helvetica
+Exported: Tasks List (TEXT)
+Exported text: Sort by
+  Text content: "Sort by"
+  Font: Helvetica
+Exported: Sort by (TEXT)
+Exported text: Categories
+  Text content: "Categories"
+  Font: Helvetica
+Exported: Categories (TEXT)
+Exported text: Extra Bold
+  Text content: "Redraw"
+  Font: Helvetica
+Exported: Extra Bold (TEXT)
+Exported text: les contreformes intérieures de
+  Text content: "les contreformes intérieures de"
+  Font: Helvetica
+Exported: les contreformes intérieures de (TEXT)
+Exported text: o
+  Text content: "o"
+  Font: Helvetica
+Exported: o (TEXT)
+Exported text: o
+  Text content: "O"
+  Font: Helvetica
+Exported: o (TEXT)
+Exported text: o
+  Text content: "a"
+  Font: Helvetica
+Exported: o (TEXT)
+Exported text: o
+  Text content: "A"
+  Font: Helvetica
+Exported: o (TEXT)
+Exported text: Copier
+  Text content: "Copier"
+  Font: Helvetica
+Exported: Copier (TEXT)
+Exported text: Extra Bold
+  Text content: "Kerning"
+  Font: Helvetica
+Exported: Extra Bold (TEXT)
+Exported text: de
+  Text content: "de"
+  Font: Helvetica
+Exported: de (TEXT)
+Exported text: Extra Bold
+  Text content: "Extra Bold"
+  Font: Helvetica
+Exported: Extra Bold (TEXT)
+Exported text: à
+  Text content: "à"
+  Font: Helvetica
+Exported: à (TEXT)
+Exported text: Extra Bold
+  Text content: "Contrasted-Extra-Bold"
+  Font: Helvetica
+Exported: Extra Bold (TEXT)
+Exported text: Extra Bold
+  Text content: "Spacing"
+  Font: Helvetica
+Exported: Extra Bold (TEXT)
+Exported text: for
+  Text content: "for"
+  Font: Helvetica
+Exported: for (TEXT)
+Exported text: o
+  Text content: "t"
+  Font: Helvetica
+Exported: o (TEXT)
+Exported text: Extra Bold
+  Text content: "Spacing"
+  Font: Helvetica
+Exported: Extra Bold (TEXT)
+Exported text: pour
+  Text content: "pour"
+  Font: Helvetica
+Exported: pour (TEXT)
+Exported text: Extra Bold
+  Text content: "Regular"
+  Font: Helvetica
+Exported: Extra Bold (TEXT)
+Exported text: Extra Bold
+  Text content: "Redraw"
+  Font: Helvetica
+Exported: Extra Bold (TEXT)
+Exported text: for
+  Text content: "for"
+  Font: Helvetica
+Exported: for (TEXT)
+Exported text: o
+  Text content: "x"
+  Font: Helvetica
+Exported: o (TEXT)
+Exported text: o
+  Text content: "X"
+  Font: Helvetica
+Exported: o (TEXT)
+Exported text: Extra Bold
+  Text content: "Regular"
+  Font: Helvetica
+Exported: Extra Bold (TEXT)
+Exported text: Completed Tasks
+  Text content: "Completed Tasks"
+  Font: Helvetica
+Exported: Completed Tasks (TEXT)
+Exported text: Sort by
+  Text content: "Sort by"
+  Font: Helvetica
+Exported: Sort by (TEXT)
+Exported text: Categories
+  Text content: "Categories"
+  Font: Helvetica
+Exported: Categories (TEXT)
+Exported text: Extra Bold
+  Text content: "Redraw"
+  Font: Helvetica
+Exported: Extra Bold (TEXT)
+Exported text: les contreformes intérieures de
+  Text content: "les contreformes intérieures de"
+  Font: Helvetica
+Exported: les contreformes intérieures de (TEXT)
+Exported text: o
+  Text content: "o"
+  Font: Helvetica
+Exported: o (TEXT)
+Exported text: o
+  Text content: "O"
+  Font: Helvetica
+Exported: o (TEXT)
+Exported text: o
+  Text content: "a"
+  Font: Helvetica
+Exported: o (TEXT)
+Exported text: o
+  Text content: "A"
+  Font: Helvetica
+Exported: o (TEXT)
+Exported text: Copier
+  Text content: "Copier"
+  Font: Helvetica
+Exported: Copier (TEXT)
+Exported text: Extra Bold
+  Text content: "Kerning"
+  Font: Helvetica
+Exported: Extra Bold (TEXT)
+Exported text: de
+  Text content: "de"
+  Font: Helvetica
+Exported: de (TEXT)
+Exported text: Extra Bold
+  Text content: "Extra Bold"
+  Font: Helvetica
+Exported: Extra Bold (TEXT)
+Exported text: à
+  Text content: "à"
+  Font: Helvetica
+Exported: à (TEXT)
+Exported text: Extra Bold
+  Text content: "Contrasted-Extra-Bold"
+  Font: Helvetica
+Exported: Extra Bold (TEXT)
+Exported text: Extra Bold
+  Text content: "Spacing"
+  Font: Helvetica
+Exported: Extra Bold (TEXT)
+Exported text: for
+  Text content: "for"
+  Font: Helvetica
+Exported: for (TEXT)
+Exported text: o
+  Text content: "t"
+  Font: Helvetica
+Exported: o (TEXT)
+Exported text: Extra Bold
+  Text content: "Spacing"
+  Font: Helvetica
+Exported: Extra Bold (TEXT)
+Exported text: pour
+  Text content: "pour"
+  Font: Helvetica
+Exported: pour (TEXT)
+Exported text: Extra Bold
+  Text content: "Regular"
+  Font: Helvetica
+Exported: Extra Bold (TEXT)
+Exported text: Extra Bold
+  Text content: "Redraw"
+  Font: Helvetica
+Exported: Extra Bold (TEXT)
+Exported text: for
+  Text content: "for"
+  Font: Helvetica
+Exported: for (TEXT)
+Exported text: o
+  Text content: "x"
+  Font: Helvetica
+Exported: o (TEXT)
+Exported text: o
+  Text content: "X"
+  Font: Helvetica
+Exported: o (TEXT)
+Exported text: Extra Bold
+  Text content: "Regular"
+  Font: Helvetica
+Exported: Extra Bold (TEXT)
+Total exported layers: 56
+Fonts used: Helvetica:Regular
+Export complete.

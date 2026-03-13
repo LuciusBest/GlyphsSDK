@@ -247,7 +247,7 @@ _MASTER_TAG_COLOR = _color_from_rgb(0.18, 0.45, 0.92)
 class TagAttachmentCell(NSTextAttachmentCell):
 	descriptor = None
 	horizontalPadding = 5
-	verticalPadding = 2
+	verticalPadding = 1
 	radius = 0
 
 	def initWithDescriptor_(self, descriptor):
@@ -255,7 +255,7 @@ class TagAttachmentCell(NSTextAttachmentCell):
 		if self is None:
 			return None
 		self.descriptor = descriptor or {}
-		self.font = NSFont.systemFontOfSize_(10)
+		self.font = NSFont.systemFontOfSize_(11)
 		return self
 
 	def cellSize(self):
@@ -274,13 +274,10 @@ class TagAttachmentCell(NSTextAttachmentCell):
 	@objc.python_method
 	def _drawTagInFrame(self, frame):
 		descriptor = self.descriptor or {}
-		bgColor, textColor, strokeColor = self._colorsForDescriptor(descriptor)
+		bgColor, textColor = self._colorsForDescriptor(descriptor)
 		path = NSBezierPath.bezierPathWithRoundedRect_xRadius_yRadius_(frame, self.radius, self.radius)
 		bgColor.set()
 		path.fill()
-		strokeColor.set()
-		path.setLineWidth_(1.0)
-		path.stroke()
 		textRect = NSInsetRect(frame, self.horizontalPadding, self.verticalPadding)
 		paragraph = NSMutableParagraphStyle.alloc().init()
 		paragraph.setAlignment_(NSTextAlignmentCenter)
@@ -295,35 +292,16 @@ class TagAttachmentCell(NSTextAttachmentCell):
 
 	@objc.python_method
 	def _colorsForDescriptor(self, descriptor):
-		accent = self._accentColor(descriptor)
-		bgAlpha = 0.32
-		strokeAlpha = 0.55
+		bgAlpha = 0.72
+		bgWhite = 0.26
 		if descriptor.get('inactive'):
-			bgAlpha = 0.2
-			strokeAlpha = 0.3
+			bgAlpha = 0.56
+			bgWhite = 0.32
 		if descriptor.get('highlighted'):
-			bgAlpha = 0.42
-			strokeAlpha = 0.7
-		try:
-			textColor = accent.colorWithAlphaComponent_(1.0)
-			strokeColor = accent.colorWithAlphaComponent_(strokeAlpha)
-		except Exception:
-			textColor = accent
-			strokeColor = accent
-		bgColor = NSColor.colorWithCalibratedWhite_alpha_(1.0, bgAlpha)
-		return bgColor, textColor, strokeColor
-
-	@objc.python_method
-	def _accentColor(self, descriptor):
-		tagType = descriptor.get('type')
-		categoryKey = descriptor.get('categoryKey')
-		if tagType == 'glyph':
-			return _GLYPH_TAG_COLOR
-		if tagType == 'master':
-			return _MASTER_TAG_COLOR
-		if categoryKey and categoryKey in _CATEGORY_TAG_COLORS:
-			return _CATEGORY_TAG_COLORS[categoryKey]
-		return _DEFAULT_CATEGORY_COLOR
+			bgAlpha = 0.84
+			bgWhite = 0.18
+		bgColor = NSColor.colorWithCalibratedWhite_alpha_(bgWhite, bgAlpha)
+		return bgColor, NSColor.whiteColor()
 
 class TaskSentenceCell(NSTextFieldCell):
 	paddingX = 4
@@ -455,6 +433,8 @@ class TaskSentenceCell(NSTextFieldCell):
 			if not cell:
 				return None
 			attachment.setAttachmentCell_(cell)
+			size = cell.cellSize()
+			attachment.setBounds_(NSMakeRect(0, -1, size.width, size.height))
 			return attachment
 		except Exception:
 			return None
@@ -859,13 +839,13 @@ class GlyphsToDoPlugin(PalettePlugin):
 		if categoryKey:
 			tags.append({
 				'type': 'category',
-				'label': '/%s' % categoryKey,
+				'label': categoryKey,
 				'categoryKey': categoryKey,
 			})
 		for glyphName in self._glyphTokenList(item):
-			tags.append({'type': 'glyph', 'label': '/%s' % glyphName})
+			tags.append({'type': 'glyph', 'label': glyphName})
 		for masterName in self._mastersForTask(item):
-			tags.append({'type': 'master', 'label': '/%s' % masterName})
+			tags.append({'type': 'master', 'label': masterName})
 		return {
 			'text': text,
 			'fallback': self._untitledTaskLabel,
@@ -913,16 +893,16 @@ class GlyphsToDoPlugin(PalettePlugin):
 			categoryKey = self._categoryLookup[lower]
 			descriptor = {
 				'type': 'category',
-				'label': '/%s' % categoryKey,
+				'label': categoryKey,
 				'categoryKey': categoryKey,
 			}
 		else:
 			masterName = self._canonicalMasterName(label)
 			if masterName:
-				descriptor = {'type': 'master', 'label': '/%s' % masterName}
+				descriptor = {'type': 'master', 'label': masterName}
 			else:
 				glyphName = self._resolveGlyphName(label)
-				descriptor = {'type': 'glyph', 'label': '/%s' % glyphName}
+				descriptor = {'type': 'glyph', 'label': glyphName}
 		return descriptor, ''.join(reversed(trailingChars))
 
 	@objc.python_method

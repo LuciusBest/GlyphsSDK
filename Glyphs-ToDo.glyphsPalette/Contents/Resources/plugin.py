@@ -314,7 +314,11 @@ class TagAttachmentCell(NSTextAttachmentCell):
 
 class TaskSentenceCell(NSTextFieldCell):
 	paddingX = 8
-	paddingY = 3
+	paddingY = 1
+	lineGap = 2
+	chipHorizontalPadding = 6
+	chipVerticalPadding = 2
+	chipRadius = 6
 
 	def init(self):
 		self = objc.super(TaskSentenceCell, self).init()
@@ -340,27 +344,202 @@ class TaskSentenceCell(NSTextFieldCell):
 		self._drawRowBackground_inView_(frame, view)
 		value = self.objectValue()
 		if isinstance(value, dict):
-			attributed = self._buildAttributedSentence(value)
-			if attributed is not None:
-				inset = NSInsetRect(frame, self.paddingX, self.paddingY)
-				attributed.drawInRect_(inset)
-				return
+			layout = self._layoutForValue_width_(value, frame.size.width)
+			self._drawLayout_inFrame_(layout, frame)
+			return
 		objc.super(TaskSentenceCell, self).drawWithFrame_inView_(frame, view)
 
 	@objc.python_method
 	def heightForValue_width_(self, value, width):
-		usableWidth = max(40, width - (self.paddingX * 2))
 		if isinstance(value, dict):
-			attributed = self._buildAttributedSentence(value)
+			layout = self._layoutForValue_width_(value, width)
+			return int(math.ceil(layout.get('height', self._lineHeight() + 6)))
 		else:
 			text = value or ''
-			attributed = NSAttributedString.alloc().initWithString_attributes_(text, self._textAttributes({'done': False}))
-		if attributed is None:
-			return int(math.ceil(self._lineHeight() + 6))
-		options = NSStringDrawingUsesLineFragmentOrigin | NSStringDrawingUsesFontLeading
-		rect = attributed.boundingRectWithSize_options_(NSMakeSize(usableWidth, 10000), options)
-		contentHeight = max(rect.size.height, self._lineHeight())
-		return int(math.ceil(contentHeight + 6))
+			layout = self._layoutForValue_width_({'text': text, 'done': False}, width)
+			return int(math.ceil(layout.get('height', self._lineHeight() + 6)))
+
+	@objc.python_method
+	def _layoutForValue_width_(self, value, width):
+		availableWidth = max(40, width - (self.paddingX * 2))
+		textAttributes = self._textAttributes(value)
+		runs = self._runsForValue(value, textAttributes)
+		textMetrics = self._textMetrics(textAttributes)
+		lineContentHeight = textMetrics['height'] + (self.chipVerticalPadding * 2)
+		lines = []
+		currentRuns = []
+		currentWidth = 0
+
+		for run in runs:
+			runWidth = run['width']
+			isWhitespace = run.get('isWhitespace', False)
+			if not currentRuns and isWhitespace:
+				continue
+			if currentRuns and (currentWidth + runWidth) > availableWidth and not isWhitespace:
+				lines.append(self._finalizeLine(currentRuns, currentWidth, lineContentHeight))
+				currentRuns = []
+				currentWidth = 0
+				if isWhitespace:
+					continue
+			runCopy = dict(run)
+			runCopy['x'] = currentWidth
+			currentRuns.append(runCopy)
+			currentWidth += runWidth
+
+		if currentRuns:
+			lines.append(self._finalizeLine(currentRuns, currentWidth, lineContentHeight))
+		if not lines:
+			lines.append(self._finalizeLine([], 0, lineContentHeight))
+
+		height = (self.paddingY * 2) + sum(line['height'] for line in lines)
+		if len(lines) > 1:
+			height += (len(lines) - 1) * self.lineGap
+		return {
+			'lines': lines,
+			'height': height,
+			'textAttributes': textAttributes,
+			'textMetrics': textMetrics,
+		}
+
+	@objc.python_method
+	def _runsForValue(self, value, textAttributes):
+		runs = []
+		segments = value.get('segments') or []
+		if segments:
+			for segment in segments:
+				if segment.get('kind') == 'tag':
+					descriptor = dict(segment.get('descriptor') or {})
+					descriptor['inactive'] = descriptor.get('inactive') or value.get('done')
+					descriptor['highlighted'] = bool(self.isHighlighted())
+					runs.append(self._tagRunForDescriptor(descriptor, textAttributes))
+					continue
+				self._appendTextRuns(runs, segment.get('value') or '', textAttributes)
+			return runs
+		text = value.get('text') or ''
+		if not isinstance(text, str):
+			text = str(text)
+		text = text.strip() or (value.get('fallback') or '')
+		self._appendTextRuns(runs, text, textAttributes)
+		tags = value.get('tags') or []
+		for descriptor in tags:
+			if runs:
+				self._appendTextRuns(runs, ' ', textAttributes)
+			tagDescriptor = dict(descriptor)
+			tagDescriptor['inactive'] = tagDescriptor.get('inactive') or value.get('done')
+			tagDescriptor['highlighted'] = bool(self.isHighlighted())
+			runs.append(self._tagRunForDescriptor(tagDescriptor, textAttributes))
+		return runs
+
+	@objc.python_method
+	def _appendTextRuns(self, runs, text, textAttributes):
+		if not text:
+			return
+		for token in re.findall(r'\s+|\S+', text):
+			attrString = NSAttributedString.alloc().initWithString_attributes_(token, textAttributes)
+			size = attrString.size()
+			runs.append({
+				'kind': 'text',
+				'value': token,
+				'width': math.ceil(size.width),
+				'height': math.ceil(size.height),
+				'isWhitespace': token.isspace(),
+			})
+
+	@objc.python_method
+	def _tagRunForDescriptor(self, descriptor, textAttributes):
+		label = descriptor.get('label') or ''
+		attributes = {
+			NSFontAttributeName: self._bodyFont(),
+			NSForegroundColorAttributeName: self._chipTextColor(descriptor),
+		}
+		attrString = NSAttributedString.alloc().initWithString_attributes_(label, attributes)
+		textSize = attrString.size()
+		return {
+			'kind': 'tag',
+			'label': label,
+			'descriptor': descriptor,
+			'width': math.ceil(textSize.width) + (self.chipHorizontalPadding * 2),
+			'height': math.ceil(textSize.height) + (self.chipVerticalPadding * 2),
+			'textWidth': math.ceil(textSize.width),
+			'textHeight': math.ceil(textSize.height),
+		}
+
+	@objc.python_method
+	def _finalizeLine(self, runs, width, minimumHeight):
+		trimmedRuns = list(runs)
+		trimmedWidth = width
+		while trimmedRuns and trimmedRuns[-1].get('isWhitespace'):
+			trimmedWidth -= trimmedRuns[-1]['width']
+			trimmedRuns.pop()
+		lineHeight = minimumHeight
+		for run in trimmedRuns:
+			lineHeight = max(lineHeight, run.get('height', minimumHeight))
+		return {
+			'runs': trimmedRuns,
+			'width': max(0, trimmedWidth),
+			'height': lineHeight,
+		}
+
+	@objc.python_method
+	def _drawLayout_inFrame_(self, layout, frame):
+		if not layout:
+			return
+		textAttributes = layout.get('textAttributes') or self._textAttributes({'done': False})
+		textOriginInsetY = self.chipVerticalPadding
+		currentY = frame.origin.y + self.paddingY
+		for line in layout.get('lines', []):
+			lineTop = currentY
+			textY = lineTop + textOriginInsetY
+			for run in line.get('runs', []):
+				x = frame.origin.x + self.paddingX + run.get('x', 0)
+				if run.get('kind') == 'tag':
+					self._drawTagRun_atPoint_textY_(run, NSMakePoint(x, lineTop), textY)
+				else:
+					value = run.get('value') or ''
+					if value:
+						attrString = NSAttributedString.alloc().initWithString_attributes_(value, textAttributes)
+						attrString.drawAtPoint_(NSMakePoint(x, textY))
+			currentY += line.get('height', 0) + self.lineGap
+
+	@objc.python_method
+	def _drawTagRun_atPoint_textY_(self, run, point, textY):
+		rect = NSMakeRect(point.x, point.y, run.get('width', 0), run.get('height', 0))
+		bgColor, textColor = self._chipColorsForDescriptor(run.get('descriptor') or {})
+		path = NSBezierPath.bezierPathWithRoundedRect_xRadius_yRadius_(rect, self.chipRadius, self.chipRadius)
+		bgColor.set()
+		path.fill()
+		attrString = NSAttributedString.alloc().initWithString_attributes_(run.get('label') or '', {
+			NSFontAttributeName: self._bodyFont(),
+			NSForegroundColorAttributeName: textColor,
+		})
+		attrString.drawAtPoint_(NSMakePoint(point.x + self.chipHorizontalPadding, textY))
+
+	@objc.python_method
+	def _textMetrics(self, attributes):
+		sample = NSAttributedString.alloc().initWithString_attributes_('Ag', attributes)
+		size = sample.size()
+		return {
+			'width': math.ceil(size.width),
+			'height': math.ceil(size.height),
+		}
+
+	@objc.python_method
+	def _chipColorsForDescriptor(self, descriptor):
+		bgAlpha = 0.72
+		bgWhite = 0.26
+		if descriptor.get('inactive'):
+			bgAlpha = 0.56
+			bgWhite = 0.32
+		if descriptor.get('highlighted'):
+			bgAlpha = 0.84
+			bgWhite = 0.18
+		return NSColor.colorWithCalibratedWhite_alpha_(bgWhite, bgAlpha), self._chipTextColor(descriptor)
+
+	@objc.python_method
+	def _chipTextColor(self, descriptor):
+		if descriptor.get('highlighted'):
+			return NSColor.alternateSelectedControlTextColor()
+		return NSColor.whiteColor()
 
 	@objc.python_method
 	def _buildAttributedSentence(self, value):
@@ -666,7 +845,8 @@ class GlyphsToDoPlugin(PalettePlugin):
 		self._hoverPanel = None
 		self._hoverTracker = None
 		self._suggestionTypeColumnWidth = 70
-		self._minimumTaskRowHeight = HoverActionPanel.minimumRowHeight()
+		self._taskSentenceCell = TaskSentenceCell.alloc().init()
+		self._minimumTaskRowHeight = self._taskSentenceCell.heightForValue_width_({'text': 'Ag', 'done': False}, 200)
 
 		width, height = 260, 360
 		self.paletteWindow = Window((width, height))

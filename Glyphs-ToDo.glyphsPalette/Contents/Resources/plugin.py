@@ -247,7 +247,7 @@ _MASTER_TAG_COLOR = _color_from_rgb(0.18, 0.45, 0.92)
 class TagAttachmentCell(NSTextAttachmentCell):
 	descriptor = None
 	horizontalPadding = 5
-	verticalPadding = 1
+	verticalPadding = 2
 	radius = 0
 
 	def initWithDescriptor_(self, descriptor):
@@ -265,12 +265,22 @@ class TagAttachmentCell(NSTextAttachmentCell):
 		size = attrString.size()
 		return NSMakeSize(size.width + (self.horizontalPadding * 2), size.height + (self.verticalPadding * 2))
 
+	def drawWithFrame_inView_(self, frame, controlView):
+		self._drawTagInFrame(frame)
+
 	def drawWithFrame_inView_characterIndex_layoutManager_(self, frame, controlView, charIndex, layoutManager):
+		self._drawTagInFrame(frame)
+
+	@objc.python_method
+	def _drawTagInFrame(self, frame):
 		descriptor = self.descriptor or {}
-		bgColor, textColor = self._colorsForDescriptor(descriptor)
+		bgColor, textColor, strokeColor = self._colorsForDescriptor(descriptor)
 		path = NSBezierPath.bezierPathWithRoundedRect_xRadius_yRadius_(frame, self.radius, self.radius)
 		bgColor.set()
 		path.fill()
+		strokeColor.set()
+		path.setLineWidth_(1.0)
+		path.stroke()
 		textRect = NSInsetRect(frame, self.horizontalPadding, self.verticalPadding)
 		paragraph = NSMutableParagraphStyle.alloc().init()
 		paragraph.setAlignment_(NSTextAlignmentCenter)
@@ -286,17 +296,22 @@ class TagAttachmentCell(NSTextAttachmentCell):
 	@objc.python_method
 	def _colorsForDescriptor(self, descriptor):
 		accent = self._accentColor(descriptor)
-		bgAlpha = 0.18
+		bgAlpha = 0.32
+		strokeAlpha = 0.55
 		if descriptor.get('inactive'):
-			bgAlpha = 0.1
+			bgAlpha = 0.2
+			strokeAlpha = 0.3
 		if descriptor.get('highlighted'):
-			return NSColor.colorWithCalibratedWhite_alpha_(1.0, 0.24), NSColor.alternateSelectedControlTextColor()
+			bgAlpha = 0.42
+			strokeAlpha = 0.7
 		try:
-			textColor = accent.colorWithAlphaComponent_(0.96)
+			textColor = accent.colorWithAlphaComponent_(1.0)
+			strokeColor = accent.colorWithAlphaComponent_(strokeAlpha)
 		except Exception:
 			textColor = accent
+			strokeColor = accent
 		bgColor = NSColor.colorWithCalibratedWhite_alpha_(1.0, bgAlpha)
-		return bgColor, textColor
+		return bgColor, textColor, strokeColor
 
 	@objc.python_method
 	def _accentColor(self, descriptor):
@@ -445,6 +460,13 @@ class TaskSentenceCell(NSTextFieldCell):
 			return None
 
 class HoverActionPanel(NSView):
+	buttonHeight = 20
+	rowPadding = 8
+
+	@classmethod
+	def minimumRowHeight(cls):
+		return cls.buttonHeight + cls.rowPadding
+
 	def initWithController_(self, controller):
 		self = objc.super(HoverActionPanel, self).initWithFrame_(NSMakeRect(0, 0, 110, 28))
 		if self is None:
@@ -504,7 +526,7 @@ class HoverActionPanel(NSView):
 		startX = max(4, (width - totalWidth) / 2.0)
 		self._separatorPositions = []
 		for index, button in enumerate(self.buttons):
-			button.setFrame_(NSMakeRect(startX, (height - 20) / 2.0, buttonWidth, 20))
+			button.setFrame_(NSMakeRect(startX, (height - self.buttonHeight) / 2.0, buttonWidth, self.buttonHeight))
 			startX += buttonWidth + gap
 			if index < len(self.buttons) - 1:
 				self._separatorPositions.append(startX - gap / 2.0)
@@ -517,7 +539,7 @@ class HoverActionPanel(NSView):
 			self.setHidden_(True)
 			return
 		visible = tableView.visibleRect()
-		height = min(28, rowRect.size.height - 6)
+		height = max(self.buttonHeight + 2, min(28, rowRect.size.height - 4))
 		width = max(96, len(self.buttons) * 24 + 12)
 		rightEdge = visible.origin.x + visible.size.width
 		x = rightEdge - width - 8
@@ -624,7 +646,7 @@ class GlyphsToDoPlugin(PalettePlugin):
 		self._hoverPanel = None
 		self._hoverTracker = None
 		self._suggestionTypeColumnWidth = 70
-		self._minimumTaskRowHeight = 22
+		self._minimumTaskRowHeight = HoverActionPanel.minimumRowHeight()
 
 		width, height = 260, 360
 		self.paletteWindow = Window((width, height))

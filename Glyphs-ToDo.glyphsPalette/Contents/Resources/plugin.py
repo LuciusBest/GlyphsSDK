@@ -296,9 +296,9 @@ class TagAttachmentCell(NSTextAttachmentCell):
 	@objc.python_method
 	def baselineOffsetY(self):
 		try:
-			return self.font.descender() - self.verticalPadding
+			return self.font.descender() - self.verticalPadding - 1.0
 		except Exception:
-			return -2
+			return -3
 
 	@objc.python_method
 	def _colorsForDescriptor(self, descriptor):

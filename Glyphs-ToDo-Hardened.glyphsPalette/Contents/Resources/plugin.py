@@ -1,9 +1,9 @@
 # encoding: utf-8
 from __future__ import division, print_function, unicode_literals
 
-import json
 import math
 import re
+import time
 import objc
 from Foundation import NSObject, NSNotificationCenter
 from AppKit import (
@@ -60,6 +60,19 @@ from vanilla import (
 	TextBox,
 	Window,
 )
+
+try:
+	from core import (
+		AutocompleteProvider,
+		TaskListViewModel,
+		TaskParser,
+		TaskStore,
+	)
+except Exception:
+	AutocompleteProvider = None
+	TaskListViewModel = None
+	TaskParser = None
+	TaskStore = None
 
 
 class TaskFieldDelegate(NSObject):
@@ -368,6 +381,7 @@ class TaskSentenceCell(NSTextFieldCell):
 		availableWidth = max(40, width - (self.paddingX * 2))
 		textAttributes = self._textAttributes(value)
 		runs = self._runsForValue(value, textAttributes)
+		runs = self._expandedRunsForWidth(runs, availableWidth, textAttributes)
 		textMetrics = self._textMetrics(textAttributes)
 		lineContentHeight = textMetrics['height'] + (self.chipVerticalPadding * 2)
 		lines = []
@@ -404,6 +418,16 @@ class TaskSentenceCell(NSTextFieldCell):
 			'textAttributes': textAttributes,
 			'textMetrics': textMetrics,
 		}
+
+	@objc.python_method
+	def _expandedRunsForWidth(self, runs, availableWidth, textAttributes):
+		expanded = []
+		for run in runs:
+			if run.get('kind') == 'text' and not run.get('isWhitespace') and run.get('width', 0) > availableWidth:
+				expanded.extend(self._splitTextRunForWidth(run, availableWidth, textAttributes))
+			else:
+				expanded.append(run)
+		return expanded
 
 	@objc.python_method
 	def _runsForValue(self, value, textAttributes):
@@ -448,6 +472,38 @@ class TaskSentenceCell(NSTextFieldCell):
 				'height': math.ceil(size.height),
 				'isWhitespace': token.isspace(),
 			})
+
+	@objc.python_method
+	def _splitTextRunForWidth(self, run, availableWidth, textAttributes):
+		token = run.get('value') or ''
+		if not token:
+			return []
+		pieces = []
+		buffer = ''
+		for char in token:
+			candidate = buffer + char
+			candidateSize = NSAttributedString.alloc().initWithString_attributes_(candidate, textAttributes).size()
+			candidateWidth = int(math.ceil(candidateSize.width))
+			if buffer and candidateWidth > availableWidth:
+				pieces.append(self._textRun(buffer, textAttributes))
+				buffer = char
+				continue
+			buffer = candidate
+		if buffer:
+			pieces.append(self._textRun(buffer, textAttributes))
+		return pieces
+
+	@objc.python_method
+	def _textRun(self, token, textAttributes):
+		attrString = NSAttributedString.alloc().initWithString_attributes_(token, textAttributes)
+		size = attrString.size()
+		return {
+			'kind': 'text',
+			'value': token,
+			'width': math.ceil(size.width),
+			'height': math.ceil(size.height),
+			'isWhitespace': token.isspace(),
+		}
 
 	@objc.python_method
 	def _tagRunForDescriptor(self, descriptor, textAttributes):
@@ -655,6 +711,7 @@ class HoverActionPanel(NSView):
 			return None
 		self.controller = controller
 		self.currentRow = -1
+		self.currentTaskId = None
 		self.setOpaque_(False)
 		self.openButton = self._createButton('openClicked:')
 		self.doneButton = self._createButton('doneClicked:')
@@ -731,13 +788,13 @@ class HoverActionPanel(NSView):
 		self.setHidden_(False)
 
 	def openClicked_(self, sender):
-		self.controller._handleHoverAction('open', self.currentRow)
+		self.controller._handleHoverAction('open', self.currentRow, self.currentTaskId)
 
 	def doneClicked_(self, sender):
-		self.controller._handleHoverAction('done', self.currentRow)
+		self.controller._handleHoverAction('done', self.currentRow, self.currentTaskId)
 
 	def deleteClicked_(self, sender):
-		self.controller._handleHoverAction('delete', self.currentRow)
+		self.controller._handleHoverAction('delete', self.currentRow, self.currentTaskId)
 
 
 class TableHoverTracker(NSObject):
@@ -788,8 +845,8 @@ class TableHoverTracker(NSObject):
 		objc.super(TableHoverTracker, self).dealloc()
 
 
-class GlyphsToDoPlugin(PalettePlugin):
-	defaultsKey = "com.paulpaturel.GlyphsToDo.items"
+class GlyphsToDoHardenedPlugin(PalettePlugin):
+	defaultsKey = "com.paulpaturel.GlyphsToDoHardened.items"
 	categoryOptions = [
 		{'en': 'General', 'fr': 'General'},
 		{'en': 'Drawing', 'fr': 'Dessin'},
@@ -802,8 +859,8 @@ class GlyphsToDoPlugin(PalettePlugin):
 	@objc.python_method
 	def settings(self):
 		self.name = Glyphs.localize({
-			'en': 'Glyphs-ToDo',
-			'fr': 'Glyphs-ToDo',
+			'en': 'Glyphs-ToDo Hardened',
+			'fr': 'Glyphs-ToDo Hardened',
 		})
 		self._untitledTaskLabel = Glyphs.localize({
 			'en': 'Untitled task',
@@ -811,8 +868,9 @@ class GlyphsToDoPlugin(PalettePlugin):
 		})
 
 		self.todoItems = []
-		self._activeIndexMap = []
-		self._doneIndexMap = []
+		self._activeTaskIds = []
+		self._doneTaskIds = []
+		self._indexByTaskId = {}
 		self._activeFont = None
 		self._categoryFilter = None
 		self._doneExpanded = False
@@ -829,8 +887,15 @@ class GlyphsToDoPlugin(PalettePlugin):
 		self._hoverTracker = None
 		self._suggestionTypeColumnWidth = 70
 		self._interfaceCallbackRegistered = False
+		self._teardownRan = False
 		self._taskSentenceCell = TaskSentenceCell.alloc().init()
 		self._minimumTaskRowHeight = self._taskSentenceCell.heightForValue_width_({'text': 'Ag', 'done': False}, 200)
+		self._maxTaskRowHeight = 220
+		self._lastLoadedPayloadFingerprint = ''
+		self._lastCacheSignature = None
+		self._lastCacheRefreshAt = 0.0
+		self._cacheRefreshInterval = 0.75
+		self._taskIdCounter = 0
 
 		width, height = 260, 360
 		self.paletteWindow = Window((width, height))
@@ -856,12 +921,15 @@ class GlyphsToDoPlugin(PalettePlugin):
 		self.categoryStrings = [Glyphs.localize(names) for names in self.categoryOptions]
 		self.categoryKeys = [entry['en'] for entry in self.categoryOptions]
 		self._categoryLookup = self._buildCategoryLookup()
+		self._categoryFilterOptions = [Glyphs.localize({'en': 'All', 'fr': 'Toutes'})] + list(self.categoryStrings)
+		self._taskStore = self._buildTaskStore()
+		self._taskParser = self._buildTaskParser()
+		self._autocompleteProvider = self._buildAutocompleteProvider()
 		self.openIcon = self._symbolImage('pencil') or NSImage.imageNamed_(NSImageNameFollowLinkFreestandingTemplate)
 		self.doneIcon = self._symbolImage('checkmark.circle') or NSImage.imageNamed_(NSImageNameStatusAvailable)
 		self.deleteIcon = self._symbolImage('trash') or NSImage.imageNamed_(NSImageNameTrashEmpty)
 		self.undoIcon = self._symbolImage('arrow.uturn.left') or NSImage.imageNamed_(NSImageNameRefreshTemplate)
 
-		sectionSortOptions = [Glyphs.localize({'en': 'Categories', 'fr': 'Categories'})]
 		self.paletteWindow.group.tasksHeader = Group((10, 76, -10, 24))
 		self.paletteWindow.group.tasksHeader.title = TextBox(
 			(0, 5, -170, 14),
@@ -870,12 +938,13 @@ class GlyphsToDoPlugin(PalettePlugin):
 		)
 		self.paletteWindow.group.tasksHeader.sortLabel = TextBox(
 			(-165, 5, 50, 14),
-			Glyphs.localize({'en': 'Sort by', 'fr': 'Trier'}),
+			Glyphs.localize({'en': 'Filter', 'fr': 'Filtre'}),
 			sizeStyle='small',
 		)
 		self.paletteWindow.group.tasksHeader.sortPopUp = PopUpButton(
 			(-110, 0, 110, 24),
-			sectionSortOptions,
+			self._categoryFilterOptions,
+			callback=self._filterChanged,
 			sizeStyle='small',
 		)
 
@@ -909,12 +978,13 @@ class GlyphsToDoPlugin(PalettePlugin):
 			pass
 		self.paletteWindow.group.doneHeader.sortLabel = TextBox(
 			(-165, 5, 50, 14),
-			Glyphs.localize({'en': 'Sort by', 'fr': 'Trier'}),
+			Glyphs.localize({'en': 'Filter', 'fr': 'Filtre'}),
 			sizeStyle='small',
 		)
 		self.paletteWindow.group.doneHeader.sortPopUp = PopUpButton(
 			(-110, 0, 110, 24),
-			sectionSortOptions,
+			self._categoryFilterOptions,
+			callback=self._filterChanged,
 			sizeStyle='small',
 		)
 
@@ -965,20 +1035,21 @@ class GlyphsToDoPlugin(PalettePlugin):
 			return
 		Glyphs.addCallback(self._handleInterfaceUpdate, UPDATEINTERFACE)
 		self._interfaceCallbackRegistered = True
+		self._teardownRan = False
+
+	@objc.python_method
+	def stop(self):
+		self._teardownRuntimeObservers()
 
 	@objc.python_method
 	def __del__(self):
-		try:
-			if getattr(self, '_interfaceCallbackRegistered', False):
-				Glyphs.removeCallback(self._handleInterfaceUpdate)
-		except Exception:
-			pass
-		self._interfaceCallbackRegistered = False
+		self._teardownRuntimeObservers()
 
 	@objc.python_method
 	def addTask(self, sender=None):
 		font = self._currentFont()
 		if font is None:
+			self._notifyError(Glyphs.localize({'en': 'No font is open.', 'fr': 'Aucune fonte ouverte.'}))
 			return
 
 		rawText = (self.paletteWindow.group.newTaskField.get() or '').strip()
@@ -986,7 +1057,6 @@ class GlyphsToDoPlugin(PalettePlugin):
 			return
 		cleanText, glyphTokens, categoryFromText, masterTokens = self._extractMetadataFromText(rawText)
 		glyphNames = self._normalizeGlyphList(glyphTokens)
-		glyphNames = [self._resolveGlyphName(name) for name in glyphNames]
 		categoryKey = categoryFromText
 		if not categoryKey:
 			categoryKey = self._categoryKeyFromIndex(0)
@@ -994,6 +1064,7 @@ class GlyphsToDoPlugin(PalettePlugin):
 		if not cleanText:
 			cleanText = ' '.join(glyphNames) or ' '.join(masterTokens) or categoryKey or ''
 		self.todoItems.insert(0, {
+			'id': self._newTaskID(),
 			'task': cleanText,
 			'rawTask': rawText,
 			'done': False,
@@ -1005,37 +1076,33 @@ class GlyphsToDoPlugin(PalettePlugin):
 		self.paletteWindow.group.newTaskField.set('')
 		self._hideSuggestions()
 		self._refreshList()
-		self._saveTasks(font)
+		self._saveTasks(font, context='add task')
 
 	@objc.python_method
 	def _refreshList(self):
-		activeItems = []
-		doneItems = []
-		self._activeIndexMap = []
-		self._doneIndexMap = []
-
-		for idx, item in enumerate(self.todoItems):
-			if item.get('done'):
-				doneItems.append(self._doneDisplayItem(item))
-				self._doneIndexMap.append(idx)
-			else:
-				if self._categoryFilter and item.get('category') != self._categoryFilter:
-					continue
-				activeItems.append(self._activeDisplayItem(item))
-				self._activeIndexMap.append(idx)
+		self._ensureTaskIDs()
+		viewModelData = self._buildViewModelData()
+		activeItems = viewModelData.get('activeItems', [])
+		doneItems = viewModelData.get('doneItems', [])
+		self._activeTaskIds = viewModelData.get('activeTaskIds', [])
+		self._doneTaskIds = viewModelData.get('doneTaskIds', [])
+		self._indexByTaskId = viewModelData.get('indexByTaskId', {})
 
 		self.paletteWindow.group.todoList.set(activeItems)
 		self.paletteWindow.group.doneList.set(doneItems)
-		self._updateRowHeights()
+		self._updateRowHeights(activeItems, doneItems)
 		self.paletteWindow.group.doneHeader.toggle.setTitle(self._doneToggleTitle(len(doneItems)))
 		self._hideHoverActions()
 
 	@objc.python_method
-	def _baseDisplayItem(self, item):
-		return {
-			'task': item.get('task', ''),
-			'sentenceData': self._sentenceDisplayData(item),
-		}
+	def _ensureTaskIDs(self):
+		for item in self.todoItems:
+			if not isinstance(item, dict):
+				continue
+			taskId = item.get('id')
+			if isinstance(taskId, str) and taskId:
+				continue
+			item['id'] = self._newTaskID()
 
 	@objc.python_method
 	def _glyphTokenList(self, item):
@@ -1045,14 +1112,6 @@ class GlyphsToDoPlugin(PalettePlugin):
 		if not glyphs:
 			return []
 		return [self._resolveGlyphName(name) for name in glyphs]
-
-	@objc.python_method
-	def _activeDisplayItem(self, item):
-		return self._baseDisplayItem(item)
-
-	@objc.python_method
-	def _doneDisplayItem(self, item):
-		return self._baseDisplayItem(item)
 
 	@objc.python_method
 	def _sentenceDisplayData(self, item):
@@ -1111,28 +1170,9 @@ class GlyphsToDoPlugin(PalettePlugin):
 
 	@objc.python_method
 	def _descriptorForInlineToken(self, token):
-		if not token.startswith('/') or len(token) <= 1:
-			return (None, None)
-		core, trailingText = self._splitSlashTokenTrailingPunctuation(token)
-		if len(core) <= 1:
-			return (None, None)
-		label = core[1:]
-		lower = label.lower()
-		if lower in self._categoryLookup:
-			categoryKey = self._categoryLookup[lower]
-			descriptor = {
-				'type': 'category',
-				'label': categoryKey,
-				'categoryKey': categoryKey,
-			}
-		else:
-			masterName = self._canonicalMasterName(label)
-			if masterName:
-				descriptor = {'type': 'master', 'label': masterName}
-			else:
-				glyphName = self._resolveGlyphName(label)
-				descriptor = {'type': 'glyph', 'label': glyphName}
-		return descriptor, trailingText
+		if self._taskParser:
+			return self._taskParser.descriptor_for_inline_token(token)
+		return (None, None)
 
 	@objc.python_method
 	def _splitSlashTokenTrailingPunctuation(self, token):
@@ -1144,103 +1184,34 @@ class GlyphsToDoPlugin(PalettePlugin):
 		return core, ''.join(reversed(trailingChars))
 
 	@objc.python_method
-	def _saveTasks(self, font):
+	def _saveTasks(self, font, context='update'):
 		if font is None:
+			self._notifyError(Glyphs.localize({'en': 'Cannot save tasks without an open font.', 'fr': 'Impossible de sauvegarder sans fonte ouverte.'}))
 			return False
-		try:
-			payload = json.dumps(self.todoItems)
-		except Exception as error:
-			self._log('_saveTasks serialize error:', error)
+		if not self._taskStore:
+			self._notifyError(Glyphs.localize({'en': 'Task store is unavailable.', 'fr': 'Le stockage des taches est indisponible.'}))
 			return False
-		try:
-			font.userData[self.defaultsKey] = payload
+		self._ensureTaskIDs()
+		success, error = self._taskStore.save(font, self.todoItems)
+		if success:
+			rawPayload = self._taskStore.read_raw_payload(font)
+			self._lastLoadedPayloadFingerprint = self._taskStore.payload_fingerprint(rawPayload)
 			return True
-		except Exception as error:
-			self._log('_saveTasks userData write error:', error)
+		message = '%s: %s' % (Glyphs.localize({'en': 'Task save failed', 'fr': 'Echec de sauvegarde des taches'}), error or 'Unknown error')
+		self._log('_saveTasks (%s) error:' % context, error)
+		self._notifyError(message)
 		return False
 
 	@objc.python_method
 	def _loadTasks(self, font):
 		if font is None:
-			return []
-		try:
-			payload = font.userData.get(self.defaultsKey)
-		except Exception:
-			return []
-		if not payload:
-			return []
-		if isinstance(payload, list):
-			items = payload
-		elif isinstance(payload, str):
-			try:
-				items = json.loads(payload)
-			except Exception:
-				return []
-		else:
-			try:
-				items = json.loads(json.dumps(payload))
-			except Exception:
-				return []
-		if isinstance(items, dict):
-			items = [items]
-		if not isinstance(items, list):
-			return []
-
-		normalized = []
-		for entry in items:
-			if isinstance(entry, dict):
-				task = entry.get('task')
-				rawTask = entry.get('rawTask')
-				if task is None and isinstance(rawTask, str):
-					task = rawTask
-				done = bool(entry.get('done', False))
-				if not isinstance(task, str):
-					try:
-						task = str(task) if task is not None else ''
-					except Exception:
-						task = ''
-				task = task.strip()
-				if not isinstance(rawTask, str):
-					rawTask = None
-				glyphName = entry.get('glyph', '')
-				if not isinstance(glyphName, str):
-					glyphName = ''
-				glyphList = []
-				masterList = []
-				storedGlyphs = entry.get('glyphs')
-				if isinstance(storedGlyphs, list):
-					glyphList = [name.strip() for name in storedGlyphs if isinstance(name, str) and name.strip()]
-				elif glyphName:
-					glyphName = glyphName.strip()
-					if glyphName:
-						glyphList = [glyphName]
-				glyphList = self._normalizeGlyphList(glyphList)
-				storedMasters = entry.get('masters')
-				if isinstance(storedMasters, list):
-					masterList = [name.strip() for name in storedMasters if isinstance(name, str) and name.strip()]
-				category = self._normalizeCategory(entry.get('category'))
-			elif isinstance(entry, str):
-				task = entry.strip()
-				rawTask = None
-				done = False
-				glyphName = ''
-				glyphList = []
-				category = self._categoryKeyFromIndex(0)
-				masterList = []
-			else:
-				continue
-
-			if task:
-				normalized.append({
-					'task': task,
-					'rawTask': rawTask,
-					'done': done,
-					'glyph': glyphList[0] if glyphList else glyphName,
-					'glyphs': glyphList,
-					'category': category,
-					'masters': masterList,
-				})
-		return normalized
+			return [], '', None
+		if not self._taskStore:
+			return [], '', 'Task store is unavailable.'
+		items, fingerprint, error = self._taskStore.load(font)
+		if error:
+			return None, fingerprint, error
+		return items or [], fingerprint, None
 
 	@objc.python_method
 	def _currentFont(self):
@@ -1266,6 +1237,10 @@ class GlyphsToDoPlugin(PalettePlugin):
 			if self._activeFont is not None:
 				self._activeFont = None
 				self.todoItems = []
+				self._lastLoadedPayloadFingerprint = ''
+				self._indexByTaskId = {}
+				self._activeTaskIds = []
+				self._doneTaskIds = []
 				self._refreshList()
 				self._hideHoverActions()
 			self._updateFontCaches(None)
@@ -1273,46 +1248,63 @@ class GlyphsToDoPlugin(PalettePlugin):
 			return
 
 		if font is not self._activeFont:
+			self._updateFontCaches(font, force=True)
+			loadedTasks, fingerprint, error = self._loadTasks(font)
+			if error:
+				self._notifyError('%s: %s' % (
+					Glyphs.localize({'en': 'Task data could not be loaded', 'fr': 'Impossible de charger les taches'}),
+					error,
+				))
+				self._hideSuggestions()
+				return
 			self._activeFont = font
-			self._updateFontCaches(font)
-			self.todoItems = self._loadTasks(font)
+			self.todoItems = loadedTasks
+			self._lastLoadedPayloadFingerprint = fingerprint or ''
 			self._refreshList()
 			self._hideSuggestions()
 			return
 
-		self._updateFontCaches(font)
+		shouldRefreshCaches = self._shouldRefreshFontCaches(font)
+		self._updateFontCaches(font, force=shouldRefreshCaches)
+		self._reloadIfPersistedTasksChanged(font)
 
 	@objc.python_method
-	def _updateFontCaches(self, font):
-		if font:
-			self._glyphNames = sorted(
-				[glyph.name for glyph in font.glyphs if glyph.name],
-				key=lambda n: n.lower(),
-			)
-			self._glyphLookup = {}
-			for name in self._glyphNames:
-				lower = name.lower()
-				self._glyphLookup.setdefault(lower, []).append(name)
-			self._glyphNameSet = set(self._glyphNames)
-			self._masterNames = sorted(
-				[master.name for master in getattr(font, 'masters', []) if getattr(master, 'name', None)],
-				key=lambda n: n.lower(),
-			)
-			self._masterLookup = {}
-			for name in self._masterNames:
-				lower = name.lower()
-				self._masterLookup[lower] = name
-				normalized = self._normalizedIdentifier(name)
-				if normalized and normalized not in self._masterLookup:
-					self._masterLookup[normalized] = name
-			self._log('_updateFontCaches glyphs=%d masters=%d' % (len(self._glyphNames), len(self._masterNames)))
-		else:
+	def _updateFontCaches(self, font, force=False):
+		if font is None:
 			self._glyphNames = []
 			self._glyphLookup = {}
 			self._glyphNameSet = set()
 			self._masterNames = []
 			self._masterLookup = {}
+			self._lastCacheSignature = None
+			self._lastCacheRefreshAt = 0.0
 			self._log('_updateFontCaches cleared caches')
+			return
+		if not force and not self._shouldRefreshFontCaches(font):
+			return
+		self._glyphNames = sorted(
+			[glyph.name for glyph in font.glyphs if glyph.name],
+			key=lambda n: n.lower(),
+		)
+		self._glyphLookup = {}
+		for name in self._glyphNames:
+			lower = name.lower()
+			self._glyphLookup.setdefault(lower, []).append(name)
+		self._glyphNameSet = set(self._glyphNames)
+		self._masterNames = sorted(
+			[master.name for master in getattr(font, 'masters', []) if getattr(master, 'name', None)],
+			key=lambda n: n.lower(),
+		)
+		self._masterLookup = {}
+		for name in self._masterNames:
+			lower = name.lower()
+			self._masterLookup[lower] = name
+			normalized = self._normalizedIdentifier(name)
+			if normalized and normalized not in self._masterLookup:
+				self._masterLookup[normalized] = name
+		self._lastCacheSignature = self._fontCacheSignature(font)
+		self._lastCacheRefreshAt = time.time()
+		self._log('_updateFontCaches glyphs=%d masters=%d' % (len(self._glyphNames), len(self._masterNames)))
 
 	@objc.python_method
 	def minHeight(self):
@@ -1333,9 +1325,180 @@ class GlyphsToDoPlugin(PalettePlugin):
 		except Exception:
 			message = ' '.join([repr(part) for part in parts])
 		try:
-			print('[Glyphs-ToDo]', message)
+			print('[Glyphs-ToDo-Hardened]', message)
 		except Exception:
 			pass
+
+	@objc.python_method
+	def _notifyError(self, message):
+		text = (message or '').strip()
+		if not text:
+			return
+		try:
+			Glyphs.showNotification('Glyphs-ToDo Hardened', text)
+		except Exception:
+			self._log('ERROR:', text)
+
+	@objc.python_method
+	def _teardownRuntimeObservers(self):
+		if getattr(self, '_teardownRan', False):
+			return
+		self._teardownRan = True
+		try:
+			if getattr(self, '_interfaceCallbackRegistered', False):
+				Glyphs.removeCallback(self._handleInterfaceUpdate)
+		except Exception:
+			pass
+		self._interfaceCallbackRegistered = False
+		try:
+			self._hideHoverActions()
+		except Exception:
+			pass
+		try:
+			if self._hoverTracker:
+				self._hoverTracker.dealloc()
+		except Exception:
+			pass
+		self._hoverTracker = None
+		try:
+			if self._hoverPanel:
+				self._hoverPanel.removeFromSuperview()
+		except Exception:
+			pass
+		self._hoverPanel = None
+
+	@objc.python_method
+	def _fontCacheSignature(self, font):
+		if not font:
+			return None
+		try:
+			glyphCount = len(font.glyphs)
+		except Exception:
+			glyphCount = 0
+		masters = getattr(font, 'masters', []) or []
+		masterSignature = []
+		for master in masters:
+			masterSignature.append((getattr(master, 'id', ''), getattr(master, 'name', '')))
+		return (glyphCount, tuple(masterSignature))
+
+	@objc.python_method
+	def _shouldRefreshFontCaches(self, font):
+		if not font:
+			return True
+		now = time.time()
+		if (now - getattr(self, '_lastCacheRefreshAt', 0.0)) > self._cacheRefreshInterval:
+			signature = self._fontCacheSignature(font)
+			if signature != getattr(self, '_lastCacheSignature', None):
+				return True
+			# Keep autocomplete reasonably fresh even when counts do not change.
+			return (now - getattr(self, '_lastCacheRefreshAt', 0.0)) > (self._cacheRefreshInterval * 4)
+		return False
+
+	@objc.python_method
+	def _reloadIfPersistedTasksChanged(self, font):
+		if not font or not self._taskStore:
+			return
+		rawPayload = self._taskStore.read_raw_payload(font)
+		fingerprint = self._taskStore.payload_fingerprint(rawPayload)
+		if fingerprint == self._lastLoadedPayloadFingerprint:
+			return
+		loadedTasks, loadedFingerprint, error = self._loadTasks(font)
+		if error:
+			self._notifyError('%s: %s' % (
+				Glyphs.localize({'en': 'Task data is corrupted and was not reloaded', 'fr': 'Les donnees de taches sont corrompues et non rechargees'}),
+				error,
+			))
+			return
+		self.todoItems = loadedTasks
+		self._lastLoadedPayloadFingerprint = loadedFingerprint
+		self._refreshList()
+
+	@objc.python_method
+	def _buildTaskStore(self):
+		if TaskStore is None:
+			return None
+		return TaskStore(
+			defaults_key=self.defaultsKey,
+			normalize_category=self._normalizeCategory,
+			normalize_glyph=self._resolveGlyphName,
+			canonical_master=self._canonicalMasterName,
+		)
+
+	@objc.python_method
+	def _buildTaskParser(self):
+		if TaskParser is None:
+			return None
+		return TaskParser(
+			category_lookup=self._categoryLookup,
+			canonical_master_name=self._canonicalMasterName,
+			resolve_glyph_name=self._resolveGlyphName,
+			glyph_exists=self._glyphExists,
+			split_trailing_punctuation=self._splitSlashTokenTrailingPunctuation,
+		)
+
+	@objc.python_method
+	def _buildAutocompleteProvider(self):
+		if AutocompleteProvider is None:
+			return None
+		return AutocompleteProvider(
+			localize=Glyphs.localize,
+			category_keys=self.categoryKeys,
+			glyph_names_getter=lambda: self._glyphNames,
+			master_names_getter=self._currentMasterNames,
+			normalized_identifier=self._normalizedIdentifier,
+		)
+
+	@objc.python_method
+	def _buildViewModelData(self):
+		if TaskListViewModel is None:
+			# Fallback for environments where core.py cannot be imported.
+			activeItems = []
+			doneItems = []
+			activeTaskIds = []
+			doneTaskIds = []
+			indexByTaskId = {}
+			for idx, item in enumerate(self.todoItems):
+				if not isinstance(item, dict):
+					continue
+				taskId = item.get('id')
+				if not taskId:
+					taskId = self._newTaskID()
+					item['id'] = taskId
+				indexByTaskId[taskId] = idx
+				display = {
+					'taskId': taskId,
+					'task': item.get('task', ''),
+					'sentenceData': self._sentenceDisplayData(item),
+				}
+				if item.get('done'):
+					doneItems.append(display)
+					doneTaskIds.append(taskId)
+				else:
+					if self._categoryFilter and item.get('category') != self._categoryFilter:
+						continue
+					activeItems.append(display)
+					activeTaskIds.append(taskId)
+			return {
+				'activeItems': activeItems,
+				'doneItems': doneItems,
+				'activeTaskIds': activeTaskIds,
+				'doneTaskIds': doneTaskIds,
+				'indexByTaskId': indexByTaskId,
+			}
+		viewModel = TaskListViewModel(self._categoryFilter, self._sentenceDisplayData)
+		return viewModel.build(self.todoItems)
+
+	@objc.python_method
+	def _newTaskID(self):
+		self._taskIdCounter += 1
+		ticks = int(time.time() * 1000000)
+		return 'task-%d-%d' % (ticks, self._taskIdCounter)
+
+	@objc.python_method
+	def _glyphExists(self, name):
+		if not name:
+			return False
+		return name in self._glyphNameSet
 
 	# --- UI helpers ---
 
@@ -1395,66 +1558,21 @@ class GlyphsToDoPlugin(PalettePlugin):
 
 	@objc.python_method
 	def _detectSlashToken(self, text, cursor):
-		if not text or cursor == 0:
-			return (None, None, None)
-		start = cursor
-		while start > 0 and not text[start - 1].isspace():
-			start -= 1
-		end = cursor
-		length = len(text)
-		while end < length and not text[end].isspace():
-			end += 1
-		token = text[start:end]
-		if token.startswith('/'):
-			return token, start, end
+		if self._taskParser:
+			return self._taskParser.detect_slash_token(text, cursor)
 		return (None, None, None)
 
 	@objc.python_method
 	def _buildSuggestions(self, prefix):
-		prefixLower = prefix.lower()
-		items = []
-		categoryItems = []
-		for key in self.categoryKeys:
-			label = key
-			display = "/%s" % key
-			if not prefixLower or key.lower().startswith(prefixLower):
-				categoryItems.append({
-					'label': display,
-					'kind': Glyphs.localize({'en': 'Category', 'fr': 'Categorie'}),
-					'type': 'category',
-					'value': key,
-				})
-		glyphItems = []
-		limit = 50 if prefixLower else 25
-		count = 0
-		for name in self._glyphNames:
-			if not prefixLower or name.lower().startswith(prefixLower):
-				glyphItems.append({
-					'label': "/%s" % name,
-					'kind': Glyphs.localize({'en': 'Glyph', 'fr': 'Glyphe'}),
-					'type': 'glyph',
-					'value': name,
-				})
-				count += 1
-				if count >= limit:
-					break
-		items.extend(categoryItems)
-		items.extend(glyphItems)
-		masterItems = []
-		for masterName in self._currentMasterNames():
-			if self._matchesRelaxedPrefix(prefixLower, masterName):
-				masterItems.append({
-					'label': "/%s" % masterName,
-					'kind': Glyphs.localize({'en': 'Master', 'fr': 'Master'}),
-					'type': 'master',
-					'value': masterName,
-				})
-		items.extend(masterItems)
-		self._log('_buildSuggestions master matches=%d' % len(masterItems))
-		return items
+		if self._autocompleteProvider:
+			return self._autocompleteProvider.build(prefix)
+		return []
 
 	@objc.python_method
 	def _currentMasterNames(self):
+		cached = getattr(self, '_masterNames', None)
+		if cached:
+			return list(cached)
 		font = self._activeFont or self._currentFont()
 		if not font:
 			return []
@@ -1790,8 +1908,12 @@ class GlyphsToDoPlugin(PalettePlugin):
 		if not self._currentTokenRange or index >= len(self._currentSuggestions):
 			return False
 		item = self._currentSuggestions[index]
-		text, _ = self._currentTaskFieldState()
-		start, end = self._currentTokenRange
+		text, cursor = self._currentTaskFieldState()
+		rangeInfo = self._validatedCurrentTokenRange(text, cursor)
+		if rangeInfo is None:
+			self._hideSuggestions()
+			return False
+		start, end = rangeInfo
 		replacement = "/%s" % item['value']
 		newText = text[:start] + replacement + text[end:]
 		field = self.paletteWindow.group.newTaskField
@@ -1805,6 +1927,21 @@ class GlyphsToDoPlugin(PalettePlugin):
 		self._taskFieldDidChange()
 		self._hideSuggestions()
 		return True
+
+	@objc.python_method
+	def _validatedCurrentTokenRange(self, text, cursor):
+		stored = self._currentTokenRange
+		if not stored:
+			return None
+		start, end = stored
+		if start < 0 or end < start or end > len(text):
+			return None
+		token, detectedStart, detectedEnd = self._detectSlashToken(text, cursor)
+		if not token:
+			return None
+		if (detectedStart, detectedEnd) != (start, end):
+			return None
+		return (start, end)
 
 	@objc.python_method
 	def _suggestionSelectionChanged(self, sender):
@@ -1821,31 +1958,9 @@ class GlyphsToDoPlugin(PalettePlugin):
 
 	@objc.python_method
 	def _extractMetadataFromText(self, text):
-		words = text.split()
-		cleanWords = []
-		glyphTokens = []
-		categoryKey = None
-		masterTokens = []
-		for word in words:
-			if word.startswith('/') and len(word) > 1:
-				core, _ = self._splitSlashTokenTrailingPunctuation(word)
-				if len(core) <= 1:
-					cleanWords.append(word)
-					continue
-				token = core[1:]
-				lower = token.lower()
-				if categoryKey is None and lower in self._categoryLookup:
-					categoryKey = self._categoryLookup[lower]
-				elif lower not in self._categoryLookup:
-					masterName = self._canonicalMasterName(token)
-					if masterName:
-						masterTokens.append(masterName)
-					else:
-						glyphTokens.append(token)
-			else:
-				cleanWords.append(word)
-		cleanText = ' '.join(filter(None, cleanWords)).strip()
-		return cleanText, glyphTokens, categoryKey, masterTokens
+		if self._taskParser:
+			return self._taskParser.extract_metadata(text)
+		return text.strip(), [], None, []
 
 	@objc.python_method
 	def _normalizeGlyphList(self, names):
@@ -1856,10 +1971,12 @@ class GlyphsToDoPlugin(PalettePlugin):
 		for name in names:
 			if not name:
 				continue
-			token = name.strip()
+			if not isinstance(name, str):
+				continue
+			token = self._resolveGlyphName(name.strip())
 			if not token:
 				continue
-			key = token
+			key = token.lower()
 			if key in seen:
 				continue
 			seen.add(key)
@@ -1996,6 +2113,11 @@ class GlyphsToDoPlugin(PalettePlugin):
 			tableView = self.paletteWindow.group.todoList._tableView
 		except Exception:
 			return
+		taskId = self._taskIdFromActiveRow(row)
+		if not taskId:
+			self._hideHoverActions()
+			return
+		self._hoverPanel.currentTaskId = taskId
 		self._hoverPanel.presentInTable_atRow_(tableView, row)
 
 	@objc.python_method
@@ -2003,10 +2125,15 @@ class GlyphsToDoPlugin(PalettePlugin):
 		if self._hoverPanel:
 			self._hoverPanel.setHidden_(True)
 			self._hoverPanel.currentRow = -1
+			self._hoverPanel.currentTaskId = None
 
 	@objc.python_method
-	def _handleHoverAction(self, action, row):
-		index = self._indexFromActiveRow(row)
+	def _handleHoverAction(self, action, row, taskId=None):
+		index = None
+		if taskId:
+			index = self._indexByTaskId.get(taskId)
+		if index is None:
+			index = self._indexFromActiveRow(row)
 		if index is None:
 			return
 		if action == 'open':
@@ -2059,6 +2186,13 @@ class GlyphsToDoPlugin(PalettePlugin):
 			self._categoryFilter = None
 		else:
 			self._categoryFilter = self._categoryKeyFromIndex(value - 1)
+		try:
+			if sender is not self.paletteWindow.group.tasksHeader.sortPopUp:
+				self.paletteWindow.group.tasksHeader.sortPopUp.set(value)
+			if sender is not self.paletteWindow.group.doneHeader.sortPopUp:
+				self.paletteWindow.group.doneHeader.sortPopUp.set(value)
+		except Exception:
+			pass
 		self._refreshList()
 
 	@objc.python_method
@@ -2083,14 +2217,28 @@ class GlyphsToDoPlugin(PalettePlugin):
 
 	@objc.python_method
 	def _indexFromActiveRow(self, row):
-		if 0 <= row < len(self._activeIndexMap):
-			return self._activeIndexMap[row]
+		taskId = self._taskIdFromActiveRow(row)
+		if taskId:
+			return self._indexByTaskId.get(taskId)
+		return None
+
+	@objc.python_method
+	def _taskIdFromActiveRow(self, row):
+		if 0 <= row < len(self._activeTaskIds):
+			return self._activeTaskIds[row]
 		return None
 
 	@objc.python_method
 	def _indexFromDoneRow(self, row):
-		if 0 <= row < len(self._doneIndexMap):
-			return self._doneIndexMap[row]
+		taskId = self._taskIdFromDoneRow(row)
+		if taskId:
+			return self._indexByTaskId.get(taskId)
+		return None
+
+	@objc.python_method
+	def _taskIdFromDoneRow(self, row):
+		if 0 <= row < len(self._doneTaskIds):
+			return self._doneTaskIds[row]
 		return None
 
 	@objc.python_method
@@ -2118,7 +2266,7 @@ class GlyphsToDoPlugin(PalettePlugin):
 			resolved = self._resolveGlyphName(name)
 			if not resolved:
 				continue
-			key = resolved
+			key = resolved.lower()
 			if key in seen:
 				continue
 			seen.add(key)
@@ -2163,9 +2311,20 @@ class GlyphsToDoPlugin(PalettePlugin):
 		if not glyphNames:
 			return
 		layersToOpen = []
+		seenLayerKeys = set()
 		for glyphName in glyphNames:
 			glyph = font.glyphs[glyphName]
 			if glyph is None:
+				continue
+			if masterNames:
+				candidateLayers = self._layersForGlyphAndMasters(font, glyph, masterNames)
+				for layer in candidateLayers:
+					layerId = getattr(layer, 'layerId', None) or getattr(layer, 'name', '')
+					layerKey = '%s::%s' % (glyphName, layerId)
+					if layerKey in seenLayerKeys:
+						continue
+					seenLayerKeys.add(layerKey)
+					layersToOpen.append(layer)
 				continue
 			layer = self._layerForGlyph(glyph)
 			if layer is not None:
@@ -2175,6 +2334,28 @@ class GlyphsToDoPlugin(PalettePlugin):
 				self._openMasterGlyphSet(font, masterNames)
 			return
 		self._openLayers(font, layersToOpen)
+
+	@objc.python_method
+	def _layersForGlyphAndMasters(self, font, glyph, masterNames):
+		layers = []
+		for masterName in masterNames:
+			master = self._masterByName(font, masterName)
+			if master is None:
+				continue
+			layer = None
+			try:
+				if master.id in glyph.layers:
+					layer = glyph.layers[master.id]
+			except Exception:
+				layer = None
+			if layer is not None:
+				layers.append(layer)
+		if layers:
+			return layers
+		fallback = self._layerForGlyph(glyph)
+		if fallback is None:
+			return []
+		return [fallback]
 
 	@objc.python_method
 	def _openMasterGlyphSet(self, font, masterNames):
@@ -2298,7 +2479,7 @@ class GlyphsToDoPlugin(PalettePlugin):
 		self.todoItems[index]['done'] = bool(state)
 		font = self._currentFont()
 		if font:
-			self._saveTasks(font)
+			self._saveTasks(font, context='mark done')
 		self._refreshList()
 
 	@objc.python_method
@@ -2308,7 +2489,7 @@ class GlyphsToDoPlugin(PalettePlugin):
 		del self.todoItems[index]
 		font = self._currentFont()
 		if font:
-			self._saveTasks(font)
+			self._saveTasks(font, context='delete task')
 		self._refreshList()
 
 	@objc.python_method
@@ -2324,28 +2505,41 @@ class GlyphsToDoPlugin(PalettePlugin):
 		return prefix + base
 
 	@objc.python_method
-	def _updateRowHeights(self):
-		self._setListRowHeight(self.paletteWindow.group.todoList, self._minimumTaskRowHeight)
-		self._setListRowHeight(self.paletteWindow.group.doneList, self._minimumTaskRowHeight)
+	def _updateRowHeights(self, activeItems=None, doneItems=None):
+		if activeItems is None:
+			activeItems = self.paletteWindow.group.todoList.get()
+		if doneItems is None:
+			doneItems = self.paletteWindow.group.doneList.get()
+		self._setListRowHeight(self.paletteWindow.group.todoList, self._fittedRowHeightForItems(self.paletteWindow.group.todoList, activeItems))
+		self._setListRowHeight(self.paletteWindow.group.doneList, self._fittedRowHeightForItems(self.paletteWindow.group.doneList, doneItems))
 
 	@objc.python_method
-	def _fittedRowHeightForList(self, listView):
-		return self._minimumTaskRowHeight
+	def _fittedRowHeightForItems(self, listView, items):
+		width = self._sentenceColumnWidth(listView)
+		fitted = self._minimumTaskRowHeight
+		for item in items or []:
+			if not isinstance(item, dict):
+				continue
+			value = item.get('sentenceData')
+			rowHeight = self._taskSentenceCell.heightForValue_width_(value or {'text': '', 'done': False}, width)
+			fitted = max(fitted, rowHeight)
+		return min(int(fitted), self._maxTaskRowHeight)
+
+	@objc.python_method
+	def _sentenceColumnWidth(self, listView):
+		try:
+			tableView = listView._tableView
+			columns = list(tableView.tableColumns())
+			if columns:
+				return max(80, int(columns[0].width()))
+		except Exception:
+			pass
+		return 200
 
 	@objc.python_method
 	def _setListRowHeight(self, listView, height):
 		try:
 			listView._tableView.setRowHeight_(height)
-		except Exception:
-			pass
-
-	@objc.python_method
-	def _clearActionValue(self, listView, rowIndex, columnKey):
-		try:
-			items = listView.get()
-			if 0 <= rowIndex < len(items):
-				items[rowIndex][columnKey] = -1
-				listView.set(items)
 		except Exception:
 			pass
 
@@ -2362,12 +2556,3 @@ class GlyphsToDoPlugin(PalettePlugin):
 		if image:
 			image.setTemplate_(True)
 		return image
-
-	@objc.python_method
-	def _heightForText(self, text, width):
-		content = text or ''
-		if not content:
-			return 44
-		characters_per_line = max(10, int(width / 6))
-		lines = math.ceil(len(content) / characters_per_line)
-		return 28 + (lines * 14)

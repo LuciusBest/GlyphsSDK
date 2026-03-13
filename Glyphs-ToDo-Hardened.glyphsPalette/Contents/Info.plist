@@ -7,11 +7,11 @@
 	<key>CFBundleExecutable</key>
 	<string>plugin</string>
 	<key>CFBundleIdentifier</key>
-	<string>com.paulpaturel.GlyphsToDo</string>
+	<string>com.paulpaturel.GlyphsToDoHardened</string>
 	<key>CFBundleInfoDictionaryVersion</key>
 	<string>6.0</string>
 	<key>CFBundleName</key>
-	<string>Glyphs-ToDo</string>
+	<string>Glyphs-ToDo-Hardened</string>
 	<key>CFBundleShortVersionString</key>
 	<string>0.1.0</string>
 	<key>CFBundleVersion</key>
@@ -19,7 +19,7 @@
 	<key>NSHumanReadableCopyright</key>
 	<string>Copyright, Paul Paturel, 2026</string>
 	<key>NSPrincipalClass</key>
-	<string>GlyphsToDoPlugin</string>
+	<string>GlyphsToDoHardenedPlugin</string>
 	<key>PyMainFileNames</key>
 	<array>
 		<string>plugin.py</string>
